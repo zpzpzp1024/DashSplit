@@ -489,6 +489,7 @@ static void DumpProbe(void)
 @property double lastRehost;     // rate-limits re-host/reactivation attempts
 @property int rehostCount;       // total re-hosts, for logs
 @property int failedNudges;      // consecutive reactivations that didn't stick
+@property int suppressed;        // preemptively stood down; no auto-revive fights
 @end
 
 @implementation HostSlot
@@ -703,6 +704,75 @@ static void InstallExceptionFilter(void)
     CLog(@"filter: raise hooks instance=%d class=%d format=%d, objc_exception_throw hooked=%d",
          gOriginalInstanceRaise != NULL, gOriginalClassRaise != NULL,
          gOriginalRaiseFormat != NULL, gOriginalObjcExceptionThrow != NULL);
+}
+
+#pragma mark - Preemptive foreground stand-down
+
+// The scene foreground assertion cannot be caught safely anywhere: this
+// raise path bypasses every hooked raise variant (0.1.4 log: "raise hooks
+// missed it" right before the uncaught abort), swallowing inside
+// objc_exception_throw segfaults its noreturn caller (0.1.1), and passing
+// it through aborts SpringBoard (twice in the 0.1.4 log). So we PREEMPT:
+// SBMainDisplaySceneManager delivers every scene-settings diff through one
+// method — when a diff tells one of OUR scenes its foreground flag is going
+// No (typically the user opened an app on the phone), we stand the
+// controller down BEFORE the diff reaches it, and the assertion's premise
+// (controller Live vs incoming No) never exists.
+static void (*gOrigSceneDidUpdate)(id, SEL, id, id, id, id);
+
+static BOOL DiffSetsForegroundNo(id diff)
+{
+    if (!diff) return NO;
+    NSString *text = [diff description];
+    return [text containsString:@"foreground"] && [text containsString:@"BSSettingFlagNo"];
+}
+
+static NSString *SceneMatchText(id scene)
+{
+    id identifier = Call0(scene, @"sceneIdentifier");
+    if (![identifier isKindOfClass:[NSString class]]) identifier = Call0(scene, @"identifier");
+    if ([identifier isKindOfClass:[NSString class]]) return identifier;
+    return [scene description] ?: @"";
+}
+
+static void DashSplitSceneDidUpdate(id self, SEL _cmd, id scene, id diff, id oldSettings, id context)
+{
+    @try {
+        if (DiffSetsForegroundNo(diff)) {
+            NSString *sceneText = SceneMatchText(scene);
+            for (int index = 0; index < 2; index++) {
+                HostSlot *slot = gSlots[index];
+                if (!slot || !slot.viewController) continue;
+                if (![sceneText containsString:slot.bundleID]) continue;
+                CLog(@"preempt[%d]: foreground=No diff for %@, standing down before delivery", index, slot.bundleID);
+                slot.suppressed = 1;
+                SlotSetMode(index, 0);
+            }
+        }
+    } @catch (NSException *exception) {
+        CLog(@"preempt: scan threw %@", exception.reason);
+    }
+    if (gOrigSceneDidUpdate) {
+        gOrigSceneDidUpdate(self, _cmd, scene, diff, oldSettings, context);
+    }
+}
+
+static void InstallSceneDiffHook(void)
+{
+    static BOOL installed = NO;
+    if (installed) return;
+    installed = YES;
+
+    void *(*hookMessage)(Class, SEL, void *, void **) =
+        (void *(*)(Class, SEL, void *, void **))dlsym(RTLD_DEFAULT, "MSHookMessageEx");
+    Class managerClass = NSClassFromString(@"SBMainDisplaySceneManager");
+    SEL sel = NSSelectorFromString(@"_scene:didUpdateClientSettingsWithDiff:oldClientSettings:transitionContext:");
+    if (hookMessage && managerClass && class_getInstanceMethod(managerClass, sel)) {
+        hookMessage(managerClass, sel, (void *)DashSplitSceneDidUpdate, (void **)&gOrigSceneDidUpdate);
+        CLog(@"preempt: SBMainDisplaySceneManager diff hook installed");
+    } else {
+        CLog(@"preempt: hook unavailable (ms=%d class=%d)", hookMessage != NULL, managerClass != nil);
+    }
 }
 
 #pragma mark - Hosting sequence
@@ -1061,6 +1131,7 @@ static void RestoreSlot(int index)
          scene ? NSStringFromClass([scene class]) : @"(nil)", active);
     
     if (scene && slot.viewController) {
+        slot.suppressed = 0;
         ReactivateSlot(index);
         return;
     }
@@ -1333,6 +1404,21 @@ static void HealthCheckSlots(void)
         id scene = slot.handle ? Call0(slot.handle, @"sceneIfExists") : nil;
         BOOL active = BoolReturn(scene, @"isActive", NO);
         
+        if (slot.suppressed) {
+            // Stood down preemptively (foreground=No diff). Do NOT nudge or
+            // re-host while suppressed — that would flip us back to Live and
+            // re-arm the assertion. Revive passively only when the system
+            // itself reports the scene active again.
+            if (scene && active) {
+                CLog(@"health[%d]: scene active again after preempt, reviving", index);
+                slot.suppressed = 0;
+                slot.failedNudges = 0;
+                slot.lastRehost = now;
+                ReactivateSlot(index);
+            }
+            continue;
+        }
+        
         if (scene && active) {
             slot.failedNudges = 0;
             continue;
@@ -1413,7 +1499,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.14 loaded ---");
+        CLog(@"--- DashSplit 0.1.15 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
@@ -1448,6 +1534,7 @@ static void DashSplitInit(void)
                 CFPreferencesAppSynchronize(CFSTR("lilliana.dashsplit"));
                 CLog(@"init: one-time test-mode reset applied (default OFF)");
             }
+            InstallSceneDiffHook();
             LogPrefsState();
             LogHostingAPI();
             DumpProbe();
