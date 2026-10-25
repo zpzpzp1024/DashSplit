@@ -1,6 +1,6 @@
 Package: lilliana.dashsplit
 Name: 车载分屏
-Version: 0.1.13
+Version: 0.1.14
 Architecture: iphoneos-arm64
 Description: CarPlay split view experiment: puts a window on the car display
 Maintainer: zpzpzp

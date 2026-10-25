@@ -15,8 +15,8 @@ private let keyEnabled = "Enabled"
 private let keyLeft = "HostBundleID"
 private let keyRight = "HostBundleID2"
 // Uninstallable system apps: the defaults must exist on every device.
-private let defaultLeft = "com.apple.Preferences"
-private let defaultRight = "com.apple.AppStore"
+private let defaultLeft = "com.apple.mobiletimer"   // 时钟
+private let defaultRight = "com.apple.mobilecal"     // 日历
 
 private let prefsDomain = "lilliana.dashsplit" as CFString
 

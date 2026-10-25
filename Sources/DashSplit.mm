@@ -79,8 +79,8 @@ static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
 
 // Uninstallable system apps: the defaults must exist on every device.
-static NSString *const kDefaultHost1 = @"com.apple.Preferences";
-static NSString *const kDefaultHost2 = @"com.apple.AppStore";
+static NSString *const kDefaultHost1 = @"com.apple.mobiletimer";   // 时钟
+static NSString *const kDefaultHost2 = @"com.apple.mobilecal";     // 日历
 static CGFloat const kSplitRatio = 0.6;
 
 #pragma mark - Logging
@@ -191,6 +191,9 @@ static void InstallCrashHandlers(void)
 // Fall back to the file if cfprefsd has nothing for the key yet.
 static id Pref(NSString *key)
 {
+    // AppSynchronize refreshes this process's cached copy of the domain so
+    // writes made by the Settings pane show up here promptly.
+    CFPreferencesAppSynchronize(CFSTR("lilliana.dashsplit"));
     id value = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR("lilliana.dashsplit")));
     if (value) return value;
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:@COCKPIT_PREFS];
@@ -1410,7 +1413,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.13 loaded ---");
+        CLog(@"--- DashSplit 0.1.14 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
@@ -1430,6 +1433,20 @@ static void DashSplitInit(void)
             if (FileExists(@COCKPIT_TEST)) {
                 [[NSFileManager defaultManager] removeItemAtPath:@COCKPIT_TEST error:nil];
                 CLog(@"init: removed leftover test marker file (test mode is toggle-only now)");
+            }
+            // One-time: force test mode OFF so a stale true value left from
+            // earlier experimentation cannot auto-start it on every boot.
+            // After this single reset the Settings toggle is the only control.
+            NSString *resetKey = @"TestModeReset_0_1_14";
+            if (!PrefBool(resetKey, NO)) {
+                CFPreferencesSetAppValue(CFSTR("TestOnMainScreen"), kCFBooleanFalse, CFSTR("lilliana.dashsplit"));
+                // Stored picks from experimentation also reset to the new
+                // Clock/Calendar defaults so the device shows them cleanly.
+                CFPreferencesSetAppValue(CFSTR("HostBundleID"), (__bridge CFTypeRef)kDefaultHost1, CFSTR("lilliana.dashsplit"));
+                CFPreferencesSetAppValue(CFSTR("HostBundleID2"), (__bridge CFTypeRef)kDefaultHost2, CFSTR("lilliana.dashsplit"));
+                CFPreferencesSetAppValue((__bridge CFStringRef)resetKey, kCFBooleanTrue, CFSTR("lilliana.dashsplit"));
+                CFPreferencesAppSynchronize(CFSTR("lilliana.dashsplit"));
+                CLog(@"init: one-time test-mode reset applied (default OFF)");
             }
             LogPrefsState();
             LogHostingAPI();
