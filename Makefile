@@ -7,25 +7,18 @@ export THEOS_PLATFORM_DEB_COMPRESSION_TYPE = xz
 
 include $(THEOS)/makefiles/common.mk
 
-# Main tweak (SpringBoard) + the Settings injector (com.apple.Preferences),
-# which adds the 车载分屏 row without PreferenceLoader.
-TWEAK_NAME = DashSplit DashSplitSettings
-
+TWEAK_NAME = DashSplit
 DashSplit_FILES = Sources/DashSplit.mm
 DashSplit_FRAMEWORKS = UIKit Foundation QuartzCore
 DashSplit_CFLAGS = -fobjc-arc
 DashSplit_INSTALL_PATH = /var/jb/Library/MobileSubstrate/DynamicLibraries
 
-DashSplitSettings_FILES = Pref/DashSplitSettingsInjector.mm
-DashSplitSettings_FRAMEWORKS = UIKit Foundation Preferences
-DashSplitSettings_CFLAGS = -fobjc-arc
-DashSplitSettings_INSTALL_PATH = /var/jb/Library/MobileSubstrate/DynamicLibraries
-
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-# The pane the injector pushes. Row definitions live in specs.plist (cell
-# classes as strings — the public SDK types the PSSpecifier constructor's
-# cell argument as an undocumented enum).
+# The 车载分屏 pane in Settings. The entry plist mirrors Reverie's exactly
+# (fields wrapped in an "entry" dict) — Reverie's pane is proven to surface on
+# the target device, while the bare top-level format the earlier versions
+# shipped was silently ignored by the installed PreferenceLoader.
 BUNDLE_NAME = DashSplitPref
 DashSplitPref_FILES = Pref/DashSplitPref.mm
 DashSplitPref_FRAMEWORKS = Foundation UIKit Preferences
@@ -36,5 +29,8 @@ include $(THEOS_MAKE_PATH)/bundle.mk
 
 internal-stage::
 	@echo "DashSplit staged at $(THEOS_STAGING_DIR)"
+	ldid -S "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceBundles/DashSplitPref.bundle/DashSplitPref"
 	mkdir -p "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceBundles/DashSplitPref.bundle"
 	cp Pref/specs.plist "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceBundles/DashSplitPref.bundle/specs.plist"
+	mkdir -p "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceLoader/Preferences"
+	cp Pref/entry.plist "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceLoader/Preferences/DashSplitPref.plist"

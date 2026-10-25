@@ -1,8 +1,9 @@
 // DashSplit - CarPlay split view experiments
 //
-// 0.1.3: Settings entry ships as our own injector dylib (com.apple.Preferences
-// filter) — PreferenceLoader was installed correctly on the device yet never
-// surfaced the entry, so the dependency is gone entirely.
+// 0.1.4: entry plist mirrors Reverie's proven format (fields wrapped in an
+// "entry" dict, ldid -S re-signed bundle) — the bare top-level format was
+// silently ignored by the installed PreferenceLoader; the 0.1.3 injector
+// experiment is reverted.
 // 0.1.2: swallow the scene-foreground assertion at +[NSException raise:format:]
 // (the raise variant that slipped past the other hooks); the
 // objc_exception_throw hook is log-only now — swallowing there segfaults the
@@ -1372,7 +1373,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.3 loaded ---");
+        CLog(@"--- DashSplit 0.1.4 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
