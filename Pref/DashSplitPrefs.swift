@@ -86,7 +86,7 @@ final class DashSplitPrefListController: PSListController {
         title = "车载分屏"
     }
 
-    private func appPicker(_ title: String, key: String, defaultID: String) -> PSSpecifier {
+    private func appPicker(_ title: String, key: String, defaultID: String) -> PSSpecifier? {
         let apps = installedApps()
         let defaultName = apps.first(where: { $0["id"] == defaultID })?["name"] ?? defaultID
 
@@ -106,11 +106,11 @@ final class DashSplitPrefListController: PSListController {
             cell: .linkListCell,
             edit: nil
         )
-        picker.identifier = key
-        picker.setProperty(names, forKey: "titles")
-        picker.setProperty(ids, forKey: "values")
-        picker.setProperty(key, forKey: "prefsKey")
-        picker.setProperty(defaultID, forKey: "prefsDefault")
+        picker?.identifier = key
+        picker?.setProperty(names, forKey: "titles")
+        picker?.setProperty(ids, forKey: "values")
+        picker?.setProperty(key, forKey: "prefsKey")
+        picker?.setProperty(defaultID, forKey: "prefsDefault")
         return picker
     }
 
@@ -135,8 +135,12 @@ final class DashSplitPrefListController: PSListController {
                     footerText: "更改后重新连接 CarPlay 生效;两个半屏选择同一个 App 时,只会投屏左半屏。"
                 )
             ], to: &specifiers, in: self)
-            specifiers.add(appPicker("左半屏应用", key: keyLeft, defaultID: defaultLeft))
-            specifiers.add(appPicker("右半屏应用", key: keyRight, defaultID: defaultRight))
+            if let left = appPicker("左半屏应用", key: keyLeft, defaultID: defaultLeft) {
+                specifiers.add(left)
+            }
+            if let right = appPicker("右半屏应用", key: keyRight, defaultID: defaultRight) {
+                specifiers.add(right)
+            }
 
             setValue(specifiers, forKey: "_specifiers")
             return specifiers
