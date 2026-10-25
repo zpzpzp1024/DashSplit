@@ -1376,7 +1376,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.5 loaded ---");
+        CLog(@"--- DashSplit 0.1.6 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
