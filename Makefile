@@ -30,7 +30,5 @@ include $(THEOS_MAKE_PATH)/bundle.mk
 internal-stage::
 	@echo "DashSplit staged at $(THEOS_STAGING_DIR)"
 	ldid -S "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceBundles/DashSplitPref.bundle/DashSplitPref"
-	mkdir -p "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceBundles/DashSplitPref.bundle"
-	cp Pref/specs.plist "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceBundles/DashSplitPref.bundle/specs.plist"
 	mkdir -p "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceLoader/Preferences"
 	cp Pref/entry.plist "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceLoader/Preferences/DashSplitPref.plist"

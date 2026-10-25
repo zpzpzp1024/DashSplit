@@ -1,9 +1,12 @@
-// DashSplit preferences bundle — the "车载分屏" pane in the Settings app.
+// DashSplit preferences pane — the 车载分屏 page in Settings.
 //
-// Two app pickers (left/right pane) plus a master toggle. The pickers list
-// every installed app, system apps included, by localized name. Selections
-// are written straight to the plist file the tweak reads (the tweak parses
-// the file directly, so we bypass CFPreferences to avoid cfprefsd caching).
+// 0.1.5: every row is built in code, Reverie-style (its pane is proven on
+// this device). The previous version loaded rows from specs.plist via
+// loadSpecifiersFromPlistName:, which resolved nothing inside the
+// PreferenceLoader-hosted controller and rendered a blank page.
+//
+// Selections are written straight to the plist file the tweak reads (it
+// parses the file directly, so CFPreferences/cfprefsd is bypassed).
 // Changes take effect the next time CarPlay connects.
 
 #import <Foundation/Foundation.h>
@@ -88,6 +91,25 @@ static NSArray *InstalledApps(void)
     return apps;
 }
 
+// The public SDK types the cell: argument of the PSSpecifier constructor as
+// an undocumented PSCellType enum, so build specifiers through objc_msgSend.
+static PSSpecifier *MakeSpecifier(NSString *name, id target, SEL set, SEL get, Class detail, Class cell)
+{
+    SEL ctor = NSSelectorFromString(@"preferenceSpecifierNamed:target:action:set:get:detail:cell:edit:");
+    if (![PSSpecifier respondsToSelector:ctor]) return nil;
+    return ((PSSpecifier *(*)(id, SEL, id, id, SEL, SEL, SEL, Class, Class, Class))objc_msgSend)
+        ([PSSpecifier class], ctor, name ?: @"", target, NULL, set, get, detail, cell, nil);
+}
+
+static PSSpecifier *MakeGroup(NSString *title, NSString *footer)
+{
+    PSSpecifier *group = MakeSpecifier(title ?: @"", nil, NULL, NULL, nil, NSClassFromString(@"PSGroupCell"));
+    if (group && footer.length > 0) {
+        [group setProperty:footer forKey:@"footerText"];
+    }
+    return group;
+}
+
 @interface DashSplitPrefListController : PSListController
 @end
 
@@ -99,16 +121,9 @@ static NSArray *InstalledApps(void)
     self.title = @"车载分屏";
 }
 
-// The rows live in specs.plist (cell classes as strings — the public SDK
-// declares the PSSpecifier constructor's cell argument as an undocumented
-// PSCellType enum, so the plist route is the one that compiles). The two
-// picker rows get their dynamic titles/values injected here, matching the
-// row order in the plist: 0 toggle, 1 left, 2 right, 3 note.
-- (void)configurePicker:(PSSpecifier *)specifier key:(NSString *)key defaultID:(NSString *)defaultID
+- (PSSpecifier *)appPickerNamed:(NSString *)title key:(NSString *)key defaultID:(NSString *)defaultID
 {
     NSArray *apps = InstalledApps();
-    NSMutableArray *names = [NSMutableArray array];
-    NSMutableArray *ids = [NSMutableArray array];
     NSString *defaultName = defaultID;
     for (NSDictionary *app in apps) {
         if ([app[@"id"] isEqualToString:defaultID]) {
@@ -116,31 +131,53 @@ static NSArray *InstalledApps(void)
             break;
         }
     }
-    [names addObject:defaultName];
-    [ids addObject:defaultID];
+
+    NSMutableArray *names = [NSMutableArray arrayWithObject:defaultName];
+    NSMutableArray *ids = [NSMutableArray arrayWithObject:defaultID];
     for (NSDictionary *app in apps) {
         [names addObject:app[@"name"]];
         [ids addObject:app[@"id"]];
     }
 
-    [specifier setProperty:names forKey:@"titles"];
-    [specifier setProperty:ids forKey:@"values"];
-    [specifier setProperty:key forKey:@"prefsKey"];
-    [specifier setProperty:defaultID forKey:@"prefsDefault"];
+    PSSpecifier *picker = MakeSpecifier(title, self,
+                                        @selector(setAppValue:forSpecifier:),
+                                        @selector(getAppValue:),
+                                        [PSListItemsController class],
+                                        NSClassFromString(@"PSLinkListCell"));
+    [picker setProperty:names forKey:@"titles"];
+    [picker setProperty:ids forKey:@"values"];
+    [picker setProperty:key forKey:@"prefsKey"];
+    [picker setProperty:defaultID forKey:@"prefsDefault"];
+    return picker;
 }
 
 - (NSArray *)specifiers
 {
     if (_specifiers == nil) {
-        _specifiers = [self loadSpecifiersFromPlistName:@"specs" target:self];
-        if ([_specifiers count] >= 3) {
-            if ([_specifiers[1] isKindOfClass:[PSSpecifier class]]) {
-                [self configurePicker:_specifiers[1] key:kKeyLeft defaultID:kDefaultLeft];
-            }
-            if ([_specifiers[2] isKindOfClass:[PSSpecifier class]]) {
-                [self configurePicker:_specifiers[2] key:kKeyRight defaultID:kDefaultRight];
-            }
-        }
+        NSMutableArray *specs = [NSMutableArray array];
+
+        PSSpecifier *general = MakeGroup(@"通用",
+            @"启用后,连接 CarPlay 时会在车机屏幕上左右分屏显示下面选择的两个 App。");
+        if (general) [specs addObject:general];
+
+        PSSpecifier *toggle = MakeSpecifier(@"启用分屏", self,
+                                            @selector(setEnabledValue:forSpecifier:),
+                                            @selector(getEnabledValue:),
+                                            nil,
+                                            NSClassFromString(@"PSSwitchCell"));
+        if (toggle) [specs addObject:toggle];
+
+        PSSpecifier *panes = MakeGroup(@"分屏应用",
+            @"更改后重新连接 CarPlay 生效;两个半屏选择同一个 App 时,只会投屏左半屏。");
+        if (panes) [specs addObject:panes];
+
+        PSSpecifier *left = [self appPickerNamed:@"左半屏应用" key:kKeyLeft defaultID:kDefaultLeft];
+        if (left) [specs addObject:left];
+
+        PSSpecifier *right = [self appPickerNamed:@"右半屏应用" key:kKeyRight defaultID:kDefaultRight];
+        if (right) [specs addObject:right];
+
+        _specifiers = specs;
     }
     return _specifiers;
 }

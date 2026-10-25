@@ -1,5 +1,8 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.5: the pane builds every row in code, Reverie-style — the plist-based
+// row loading rendered a blank page (resource lookup failed inside the
+// PreferenceLoader-hosted controller).
 // 0.1.4: entry plist mirrors Reverie's proven format (fields wrapped in an
 // "entry" dict, ldid -S re-signed bundle) — the bare top-level format was
 // silently ignored by the installed PreferenceLoader; the 0.1.3 injector
@@ -1373,7 +1376,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.4 loaded ---");
+        CLog(@"--- DashSplit 0.1.5 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
