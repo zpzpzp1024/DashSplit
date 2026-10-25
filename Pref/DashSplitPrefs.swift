@@ -17,12 +17,17 @@ private let keyRight = "HostBundleID2"
 private let defaultLeft = "com.xiaojukeji.didi"
 private let defaultRight = "com.autonavi.amap"
 
+private let prefsDomain = "lilliana.dashsplit" as CFString
+
 private func loadPrefs() -> [String: Any] {
     (NSDictionary(contentsOfFile: prefsFile) as? [String: Any]) ?? [:]
 }
 
-private func savePrefs(_ prefs: [String: Any]) {
-    NSDictionary(dictionary: prefs).write(toFile: prefsFile, atomically: true)
+// Write through cfprefsd so Settings' own preference writes and ours can
+// never clobber each other; Synchronize forces the plist file to update.
+private func setPref(_ value: Any, forKey key: String) {
+    CFPreferencesSetValue(key as CFString, value as CFTypeRef, prefsDomain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+    CFPreferencesSynchronize(prefsDomain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
 }
 
 private func stringValue(_ prefs: [String: Any], _ key: String, _ fallback: String) -> String {
@@ -91,9 +96,7 @@ private final class AppRowTarget: NSObject {
     }
 
     @objc func selectApp() {
-        var prefs = loadPrefs()
-        prefs[paneKey] = bundleID
-        savePrefs(prefs)
+        setPref(bundleID, forKey: paneKey)
         NSLog("[DashSplitPref] set %@ = %@", paneKey, bundleID)
         picker?.navigationController?.popViewController(animated: true)
     }
@@ -198,6 +201,14 @@ final class DashSplitPrefListController: PSListController {
 
     override var specifiers: NSMutableArray? {
         get {
+            // Cells bake Metadata.package into their "defaults" domain —
+            // set it before any cell is built, not only in viewDidLoad
+            // (specifiers can be requested before viewDidLoad runs; an
+            // empty package here made the toggle write to a broken domain).
+            Metadata.package = "lilliana.dashsplit"
+            Metadata.tweakName = "车载分屏"
+            Metadata.developer = "zpzpzp"
+
             if let specifiers = value(forKey: "_specifiers") as? NSMutableArray {
                 return specifiers
             }

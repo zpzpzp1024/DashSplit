@@ -185,8 +185,13 @@ static void InstallCrashHandlers(void)
 
 #pragma mark - Preferences
 
+// Read through cfprefsd, not the raw file: Settings writes go through
+// CFPreferences, and a direct file read can miss (or race) those writes.
+// Fall back to the file if cfprefsd has nothing for the key yet.
 static id Pref(NSString *key)
 {
+    id value = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR("lilliana.dashsplit")));
+    if (value) return value;
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:@COCKPIT_PREFS];
     return prefs[key];
 }
@@ -1384,7 +1389,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.9 loaded ---");
+        CLog(@"--- DashSplit 0.1.10 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
