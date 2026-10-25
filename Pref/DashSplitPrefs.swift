@@ -31,8 +31,13 @@ private func setPref(_ value: Any, forKey key: String) {
     CFPreferencesSynchronize(prefsDomain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
 }
 
-private func stringValue(_ prefs: [String: Any], _ key: String, _ fallback: String) -> String {
-    if let value = prefs[key] as? String, !value.isEmpty { return value }
+// Read through cfprefsd (where all writes go) with the file as fallback —
+// a file-only read lagged behind cfprefsd's cache and showed stale picks.
+private func currentSelection(_ key: String, _ fallback: String) -> String {
+    if let value = CFPreferencesCopyAppValue(key as CFString, prefsDomain)?.takeRetainedValue() as? String, !value.isEmpty {
+        return value
+    }
+    if let value = loadPrefs()[key] as? String, !value.isEmpty { return value }
     return fallback
 }
 
@@ -127,8 +132,7 @@ class AppPickerController: PSListController {
                 return specifiers
             }
 
-            let apps = installedApps()
-            let current = stringValue(loadPrefs(), paneKey, fallbackID)
+            let current = currentSelection(paneKey, fallbackID)
             rowTargets = []
 
             var specifiers = NSMutableArray()
@@ -220,7 +224,6 @@ final class DashSplitPrefListController: PSListController {
                 return specifiers
             }
 
-            let prefs = loadPrefs()
             var specifiers = NSMutableArray()
             SpecifierFactory.add([
                 GroupCell(
@@ -236,10 +239,10 @@ final class DashSplitPrefListController: PSListController {
                     footerText: "点进去选择 App;更改后重新连接 CarPlay 生效;两个半屏选同一个 App 时只投左半屏。"
                 )
             ], to: &specifiers, in: self)
-            if let left = paneRow("左半屏应用", current: stringValue(prefs, keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
+            if let left = paneRow("左半屏应用", current: currentSelection(keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
                 specifiers.add(left)
             }
-            if let right = paneRow("右半屏应用", current: stringValue(prefs, keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
+            if let right = paneRow("右半屏应用", current: currentSelection(keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
                 specifiers.add(right)
             }
 
