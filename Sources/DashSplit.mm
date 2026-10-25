@@ -586,6 +586,9 @@ static void DashSplitRaiseClass(id self, SEL _cmd, NSString *name, NSString *for
 // the single choke point every throw must pass, whichever raise variant the
 // framework used. CydiaSubstrate/ElleKit exports MSHookFunction in every
 // process it injects, so dlsym(RTLD_DEFAULT) finds it.
+// Not declared by the public objc headers we import — declare it ourselves.
+extern "C" void objc_exception_throw(id exception);
+
 static void (*gOriginalObjcExceptionThrow)(id exception);
 
 static void DashSplitExceptionThrowHook(id exception)
