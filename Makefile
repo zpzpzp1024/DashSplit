@@ -19,7 +19,7 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 
 # The "车载分屏" pane in the Settings app.
 BUNDLE_NAME = DashSplitPref
-DashSplitPref_FILES = Pref/DashSplitPref.mm Pref/specs.plist
+DashSplitPref_FILES = Pref/DashSplitPref.mm
 DashSplitPref_FRAMEWORKS = Foundation UIKit Preferences
 DashSplitPref_CFLAGS = -fobjc-arc
 DashSplitPref_INSTALL_PATH = /var/jb/Library/PreferenceBundles
@@ -28,5 +28,7 @@ include $(THEOS_MAKE_PATH)/bundle.mk
 
 internal-stage::
 	@echo "DashSplit staged at $(THEOS_STAGING_DIR)"
+	mkdir -p "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceBundles/DashSplitPref.bundle"
+	cp Pref/specs.plist "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceBundles/DashSplitPref.bundle/specs.plist"
 	mkdir -p "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceLoader/Preferences"
 	cp Pref/entry.plist "$(THEOS_STAGING_DIR)/var/jb/Library/PreferenceLoader/Preferences/DashSplit.plist"
