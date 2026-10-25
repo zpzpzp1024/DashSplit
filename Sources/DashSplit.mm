@@ -1,5 +1,9 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.7: the pane is Swift + JinxPrefs (a carbon copy of Reverie's pane
+// build). The 0.1.5/0.1.6 ObjC rows never rendered: they passed a cell
+// CLASS to a constructor whose cell: parameter is a PSCellType enum —
+// JinxPrefs compiles the correct enum values by construction.
 // 0.1.5: the pane builds every row in code, Reverie-style — the plist-based
 // row loading rendered a blank page (resource lookup failed inside the
 // PreferenceLoader-hosted controller).
@@ -1376,7 +1380,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.6 loaded ---");
+        CLog(@"--- DashSplit 0.1.7 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

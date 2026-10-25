@@ -15,15 +15,15 @@ DashSplit_INSTALL_PATH = /var/jb/Library/MobileSubstrate/DynamicLibraries
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-# The 车载分屏 pane in Settings. The entry plist mirrors Reverie's exactly
-# (fields wrapped in an "entry" dict) — Reverie's pane is proven to surface on
-# the target device, while the bare top-level format the earlier versions
-# shipped was silently ignored by the installed PreferenceLoader.
+# The 车载分屏 pane in Settings, Swift + JinxPrefs, mirroring Reverie's
+# proven pane build. JinxPrefs is compiled straight into the bundle.
+JINXPREFS_SOURCES = $(shell find vendor/JinxPrefs/Sources/JinxPrefs -name '*.swift' 2>/dev/null)
+
 BUNDLE_NAME = DashSplitPref
-DashSplitPref_FILES = Pref/DashSplitPref.mm
-DashSplitPref_FRAMEWORKS = Foundation UIKit Preferences
+DashSplitPref_FILES = Pref/DashSplitPrefs.swift $(JINXPREFS_SOURCES)
 DashSplitPref_CFLAGS = -fobjc-arc
 DashSplitPref_INSTALL_PATH = /var/jb/Library/PreferenceBundles
+DashSplitPref_PRIVATE_FRAMEWORKS = Preferences
 
 include $(THEOS_MAKE_PATH)/bundle.mk
 
