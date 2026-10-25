@@ -34,7 +34,7 @@ private func setPref(_ value: Any, forKey key: String) {
 // Read through cfprefsd (where all writes go) with the file as fallback —
 // a file-only read lagged behind cfprefsd's cache and showed stale picks.
 private func currentSelection(_ key: String, _ fallback: String) -> String {
-    if let value = CFPreferencesCopyAppValue(key as CFString, prefsDomain)?.takeRetainedValue() as? String, !value.isEmpty {
+    if let value = CFPreferencesCopyAppValue(key as CFString, prefsDomain) as? String, !value.isEmpty {
         return value
     }
     if let value = loadPrefs()[key] as? String, !value.isEmpty { return value }
@@ -133,6 +133,7 @@ class AppPickerController: PSListController {
             }
 
             let current = currentSelection(paneKey, fallbackID)
+            let apps = installedApps()
             rowTargets = []
 
             var specifiers = NSMutableArray()
