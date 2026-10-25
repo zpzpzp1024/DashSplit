@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Cockpit over SSH: install a deb, respring, print the tweak log.
+    DashSplit over SSH: install a deb, respring, print the tweak log.
 
 .DESCRIPTION
     The device needs OpenSSH (Sileo: openssh) and the same Wi-Fi as this PC.
@@ -11,7 +11,7 @@
     ./deploy.ps1 -Device 192.168.1.23 -Latest
 
 .EXAMPLE
-    ./deploy.ps1 -Device 192.168.1.23 -Deb .\Cockpit\packages\lilliana.cockpit_0.0.4_iphoneos-arm64.deb -Tail 120
+    ./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\lilliana.dashsplit_0.0.4_iphoneos-arm64.deb -Tail 120
 
 .EXAMPLE
     ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow
@@ -40,7 +40,7 @@ $sshOptions = @(
     '-o', 'ServerAliveInterval=15'
 )
 $target = "root@$Device"
-$remoteLog = '/var/mobile/Library/Logs/Cockpit.log'
+$remoteLog = '/var/mobile/Library/Logs/DashSplit.log'
 
 function Write-Step([string]$Text) {
     Write-Host "==> $Text" -ForegroundColor Cyan
@@ -54,18 +54,18 @@ function Invoke-Ssh([string]$Command) {
 }
 
 function Get-LatestDeb {
-    Write-Step 'Looking up the newest cockpit build'
-    $headers = @{ 'User-Agent' = 'cockpit-deploy' }
-    $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/zpzpzp1024/Reverie/releases?per_page=30' -Headers $headers
+    Write-Step 'Looking up the newest dashsplit build'
+    $headers = @{ 'User-Agent' = 'dashsplit-deploy' }
+    $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/zpzpzp1024/DashSplit/releases?per_page=30' -Headers $headers
 
-    # The CI keeps a rolling "cockpit-latest" release; fall back to the newest
-    # versioned cockpit-* release if it is missing.
-    $release = $releases | Where-Object { $_.tag_name -eq 'cockpit-latest' } | Select-Object -First 1
+    # The CI keeps a rolling "dashsplit-latest" release; fall back to the newest
+    # versioned dashsplit-* release if it is missing.
+    $release = $releases | Where-Object { $_.tag_name -eq 'dashsplit-latest' } | Select-Object -First 1
     if (-not $release) {
-        $release = $releases | Where-Object { $_.tag_name -like 'cockpit-*' } | Select-Object -First 1
+        $release = $releases | Where-Object { $_.tag_name -like 'dashsplit-*' } | Select-Object -First 1
     }
     if (-not $release) {
-        throw 'No cockpit release found. Pass -Deb instead.'
+        throw 'No dashsplit release found. Pass -Deb instead.'
     }
 
     $asset = $release.assets |
@@ -91,7 +91,7 @@ function Get-LocalDeb {
     $candidates = Get-ChildItem -Path (Join-Path $PSScriptRoot 'packages') -Filter '*.deb' -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime
     if (-not $candidates) {
-        throw 'No deb in Cockpit/packages. Use -Latest or -Deb.'
+        throw 'No deb in packages. Use -Latest or -Deb.'
     }
     return $candidates[-1].FullName
 }
@@ -136,7 +136,7 @@ $debName = Split-Path $debPath -Leaf
 $size = (Get-Item $debPath).Length
 Write-Step "Installing $debName ($size bytes)"
 
-& scp @sshOptions $debPath "${target}:/var/mobile/cockpit.deb"
+& scp @sshOptions $debPath "${target}:/var/mobile/dashsplit.deb"
 if ($LASTEXITCODE -ne 0) {
     throw 'scp failed.'
 }
@@ -145,9 +145,9 @@ $install = @(
     'set -e',
     'DPKG=/var/jb/usr/bin/dpkg',
     '[ -x "$DPKG" ] || DPKG=$(command -v dpkg)',
-    '"$DPKG" -i /var/mobile/cockpit.deb',
-    'rm -f /var/mobile/cockpit.deb',
-    'ls -l /var/jb/Library/MobileSubstrate/DynamicLibraries/Cockpit.dylib'
+    '"$DPKG" -i /var/mobile/dashsplit.deb',
+    'rm -f /var/mobile/dashsplit.deb',
+    'ls -l /var/jb/Library/MobileSubstrate/DynamicLibraries/DashSplit.dylib'
 ) -join '; '
 Invoke-Ssh $install
 

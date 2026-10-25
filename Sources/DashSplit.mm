@@ -1,6 +1,6 @@
-// Cockpit - CarPlay split view experiments
+// DashSplit - CarPlay split view experiments
 //
-// 0.0.24: button looks identically semi-transparent in every state (custom
+// 0.1.0: button looks identically semi-transparent in every state (custom
 // type, no press dimming); re-fit the pane scale transform on restore and
 // health nudges (the background->foreground cycle resets it, which made
 // restored panes show a 1:1 crop instead of the fitted app UI).
@@ -19,7 +19,7 @@
 //     -> SBAppViewController -> view
 //
 // Everything runs after SpringBoard is up, is wrapped in @try/@catch, and can be
-// disabled by creating /var/mobile/Library/Preferences/lilliana.cockpit.off.
+// disabled by creating /var/mobile/Library/Preferences/lilliana.dashsplit.off.
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -41,13 +41,13 @@
 #define COCKPIT_HAVE_BACKTRACE 0
 #endif
 
-#define COCKPIT_LOG     "/var/mobile/Library/Logs/Cockpit.log"
-#define COCKPIT_OFF     "/var/mobile/Library/Preferences/lilliana.cockpit.off"
-#define COCKPIT_PREFS   "/var/mobile/Library/Preferences/lilliana.cockpit.plist"
-#define COCKPIT_HOSTING "/var/mobile/Library/Preferences/lilliana.cockpit.hosting"
-#define COCKPIT_CRASHED "/var/mobile/Library/Preferences/lilliana.cockpit.crashed"
-#define COCKPIT_NEWSCENE "/var/mobile/Library/Preferences/lilliana.cockpit.newscene"
-#define COCKPIT_CRASHCOUNT "/var/mobile/Library/Preferences/lilliana.cockpit.crashcount"
+#define COCKPIT_LOG     "/var/mobile/Library/Logs/DashSplit.log"
+#define COCKPIT_OFF     "/var/mobile/Library/Preferences/lilliana.dashsplit.off"
+#define COCKPIT_PREFS   "/var/mobile/Library/Preferences/lilliana.dashsplit.plist"
+#define COCKPIT_HOSTING "/var/mobile/Library/Preferences/lilliana.dashsplit.hosting"
+#define COCKPIT_CRASHED "/var/mobile/Library/Preferences/lilliana.dashsplit.crashed"
+#define COCKPIT_NEWSCENE "/var/mobile/Library/Preferences/lilliana.dashsplit.newscene"
+#define COCKPIT_CRASHCOUNT "/var/mobile/Library/Preferences/lilliana.dashsplit.crashcount"
 
 static NSString *const kPrefsHostApp  = @"HostBundleID";
 static NSString *const kPrefsHostApp2 = @"HostBundleID2";
@@ -67,7 +67,7 @@ static void CLog(NSString *format, ...)
     NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     
-    NSLog(@"[Cockpit] %@", message);
+    NSLog(@"[DashSplit] %@", message);
     
     static NSDateFormatter *formatter;
     static dispatch_once_t once;
@@ -100,7 +100,7 @@ static void CLog(NSString *format, ...)
 
 static int gCrashCount = 0;
 
-static void CockpitWriteRaw(const char *text)
+static void DashSplitWriteRaw(const char *text)
 {
     int fd = open(COCKPIT_LOG, O_WRONLY | O_APPEND | O_CREAT, 0644);
     if (fd >= 0) {
@@ -109,11 +109,11 @@ static void CockpitWriteRaw(const char *text)
     }
 }
 
-static void CockpitSignalHandler(int signo)
+static void DashSplitSignalHandler(int signo)
 {
     char header[96];
-    snprintf(header, sizeof(header), "\n*** cockpit: signal %d ***\n", signo);
-    CockpitWriteRaw(header);
+    snprintf(header, sizeof(header), "\n*** dashsplit: signal %d ***\n", signo);
+    DashSplitWriteRaw(header);
     
     int crashFD = open(COCKPIT_CRASHED, O_WRONLY | O_CREAT, 0644);
     if (crashFD >= 0) {
@@ -134,29 +134,29 @@ static void CockpitSignalHandler(int signo)
     raise(signo);
 }
 
-static void CockpitExceptionHandler(NSException *exception)
+static void DashSplitExceptionHandler(NSException *exception)
 {
-    CLog(@"*** cockpit: uncaught %@: %@", exception.name, exception.reason);
+    CLog(@"*** dashsplit: uncaught %@: %@", exception.name, exception.reason);
     for (NSString *line in exception.callStackSymbols) {
-        CLog(@"cockpit stack: %@", line);
+        CLog(@"dashsplit stack: %@", line);
     }
     [[NSFileManager defaultManager] createFileAtPath:@COCKPIT_CRASHED contents:[NSData data] attributes:nil];
     
     gCrashCount++;
     NSString *countStr = [NSString stringWithFormat:@"%d", gCrashCount];
     [countStr writeToFile:@COCKPIT_CRASHCOUNT atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    CLog(@"*** cockpit: crash count now %d", gCrashCount);
+    CLog(@"*** dashsplit: crash count now %d", gCrashCount);
 }
 
 static void InstallCrashHandlers(void)
 {
-    NSSetUncaughtExceptionHandler(&CockpitExceptionHandler);
-    signal(SIGABRT, CockpitSignalHandler);
-    signal(SIGSEGV, CockpitSignalHandler);
-    signal(SIGBUS, CockpitSignalHandler);
-    signal(SIGILL, CockpitSignalHandler);
-    signal(SIGFPE, CockpitSignalHandler);
-    signal(SIGTRAP, CockpitSignalHandler);
+    NSSetUncaughtExceptionHandler(&DashSplitExceptionHandler);
+    signal(SIGABRT, DashSplitSignalHandler);
+    signal(SIGSEGV, DashSplitSignalHandler);
+    signal(SIGBUS, DashSplitSignalHandler);
+    signal(SIGILL, DashSplitSignalHandler);
+    signal(SIGFPE, DashSplitSignalHandler);
+    signal(SIGTRAP, DashSplitSignalHandler);
 }
 
 #pragma mark - Preferences
@@ -179,8 +179,8 @@ static NSString *PrefString(NSString *key)
     return [value isKindOfClass:[NSString class]] ? value : nil;
 }
 
-#define COCKPIT_TEST "/var/mobile/Library/Preferences/lilliana.cockpit.test"
-#define COCKPIT_HOST "/var/mobile/Library/Preferences/lilliana.cockpit.host"
+#define COCKPIT_TEST "/var/mobile/Library/Preferences/lilliana.dashsplit.test"
+#define COCKPIT_HOST "/var/mobile/Library/Preferences/lilliana.dashsplit.host"
 
 static BOOL FileExists(NSString *path)
 {
@@ -498,14 +498,14 @@ static void SlotSetMode(int index, NSInteger mode)
 // foreground status out from underneath us") whenever another party
 // (CarBridge, the phone UI, or the launch path itself) flips the scene's
 // foreground flag while our SBAppViewController still holds Live mode.
-// The exception aborts SpringBoard — the 0.0.20 crash loop in Cockpit-3.log.
+// The exception aborts SpringBoard — the 0.0.20 crash loop in DashSplit-3.log.
 // Swallow exactly that assertion while we are hosting, and resync our
 // controller's mode to 0 so it matches the scene's real state. Everything
 // else still propagates.
 static IMP gOriginalInstanceRaise;
 static IMP gOriginalClassRaise;
 
-static void CockpitResyncAfterSwallow(NSString *reason)
+static void DashSplitResyncAfterSwallow(NSString *reason)
 {
     for (int index = 0; index < 2; index++) {
         HostSlot *slot = gSlots[index];
@@ -526,28 +526,28 @@ static void CockpitResyncAfterSwallow(NSString *reason)
     });
 }
 
-static BOOL CockpitShouldSwallow(NSString *name, NSString *reason)
+static BOOL DashSplitShouldSwallow(NSString *name, NSString *reason)
 {
     if (!name || ![name isEqualToString:@"NSInternalInconsistencyException"]) return NO;
     if (![reason containsString:@"foreground status out from underneath us"]) return NO;
     return (gSlots[0] != nil || gSlots[1] != nil);
 }
 
-static void CockpitRaiseInstance(id self, SEL _cmd)
+static void DashSplitRaiseInstance(id self, SEL _cmd)
 {
     BOOL swallow = NO;
     @try {
-        swallow = CockpitShouldSwallow([self name], [self reason]);
+        swallow = DashSplitShouldSwallow([self name], [self reason]);
     } @catch (__unused NSException *ignored) { }
     if (swallow) {
         CLog(@"assert: swallowed scene foreground assertion (instance raise)");
-        CockpitResyncAfterSwallow([self reason] ?: @"");
+        DashSplitResyncAfterSwallow([self reason] ?: @"");
         return;
     }
     ((void (*)(id, SEL))gOriginalInstanceRaise)(self, _cmd);
 }
 
-static void CockpitRaiseClass(id self, SEL _cmd, NSString *name, NSString *format, va_list args)
+static void DashSplitRaiseClass(id self, SEL _cmd, NSString *name, NSString *format, va_list args)
 {
     BOOL swallow = NO;
     if (format) {
@@ -558,14 +558,14 @@ static void CockpitRaiseClass(id self, SEL _cmd, NSString *name, NSString *forma
         NSString *reason = nil;
         @try { reason = [[NSString alloc] initWithFormat:format arguments:copy]; } @catch (...) {}
         va_end(copy);
-        swallow = CockpitShouldSwallow(name, reason);
+        swallow = DashSplitShouldSwallow(name, reason);
         if (swallow) {
             CLog(@"assert: swallowed scene foreground assertion (class raise)");
-            CockpitResyncAfterSwallow(reason ?: @"");
+            DashSplitResyncAfterSwallow(reason ?: @"");
             return;
         }
     } else {
-        swallow = CockpitShouldSwallow(name, nil);
+        swallow = DashSplitShouldSwallow(name, nil);
         if (swallow) {
             CLog(@"assert: swallowed scene foreground assertion (class raise, no format)");
             return;
@@ -578,11 +578,11 @@ static void InstallExceptionFilter(void)
 {
     Method instanceMethod = class_getInstanceMethod([NSException class], @selector(raise));
     if (instanceMethod) {
-        gOriginalInstanceRaise = method_setImplementation(instanceMethod, (IMP)CockpitRaiseInstance);
+        gOriginalInstanceRaise = method_setImplementation(instanceMethod, (IMP)DashSplitRaiseInstance);
     }
     Method classMethod = class_getClassMethod([NSException class], @selector(raise:format:arguments:));
     if (classMethod) {
-        gOriginalClassRaise = method_setImplementation(classMethod, (IMP)CockpitRaiseClass);
+        gOriginalClassRaise = method_setImplementation(classMethod, (IMP)DashSplitRaiseClass);
     }
     CLog(@"filter: NSException raise hooks installed instance=%d class=%d",
          gOriginalInstanceRaise != NULL, gOriginalClassRaise != NULL);
@@ -958,11 +958,11 @@ static void RestoreSlot(int index)
     gSlots[index] = HostApplication(slot.bundleID, slot.container, index);
 }
 
-@interface CockpitControl : NSObject
+@interface DashSplitControl : NSObject
 - (void)toggleTapped;
 @end
 
-@implementation CockpitControl
+@implementation DashSplitControl
 
 - (void)toggleTapped
 {
@@ -997,7 +997,7 @@ static void RestoreSlot(int index)
 
 @end
 
-static CockpitControl *gControl;
+static DashSplitControl *gControl;
 
 static void Layout(void)
 {
@@ -1085,8 +1085,8 @@ static void CreateInterface(BOOL testMode)
     
     // Create two panes with blue translucent background.
     UIColor *paneColor = [UIColor colorWithRed:0.05 green:0.20 blue:0.55 alpha:0.55];
-    gPanes[0] = MakePane(@"Cockpit 探针\n左屏", paneColor);
-    gPanes[1] = MakePane(@"Cockpit 探针\n右屏", paneColor);
+    gPanes[0] = MakePane(@"DashSplit 探针\n左屏", paneColor);
+    gPanes[1] = MakePane(@"DashSplit 探针\n右屏", paneColor);
     [window addSubview:gPanes[0]];
     [window addSubview:gPanes[1]];
     
@@ -1101,7 +1101,7 @@ static void CreateInterface(BOOL testMode)
     // pressed, opaque otherwise". (Custom buttons have no automatic press
     // dimming; the highlighted-state title is set explicitly so a press can
     // never fall back to a stale glyph either.)
-    if (!gControl) gControl = [CockpitControl new];
+    if (!gControl) gControl = [DashSplitControl new];
     UIButton *toggle = [UIButton buttonWithType:UIButtonTypeCustom];
     UIColor *glyphColor = [UIColor colorWithWhite:1.0 alpha:0.6];
     [toggle setTitle:@"✕" forState:UIControlStateNormal];
@@ -1264,12 +1264,12 @@ static void Tick(void)
 }
 
 __attribute__((constructor))
-static void CockpitInit(void)
+static void DashSplitInit(void)
 {
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- Cockpit 0.0.24 loaded ---");
+        CLog(@"--- DashSplit 0.1.0 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

@@ -1,6 +1,6 @@
-# Cockpit
+# DashSplit（车载分屏）
 
-CarPlay 分屏实验。目标：**左半屏一个真实 App（滴滴车主端），右半屏系统 CarPlay 界面**，两边都能触控。
+CarPlay 双 App 分屏：左半屏 60% + 右半屏 40% 各投一个真实 App（默认滴滴 + 高德），左上角半透明按钮可隐藏/恢复，App 画面被系统回收后自动重挂。左/右屏显示哪个 App 可在系统设置里配置（规划中）。
 
 当前是 **里程碑 1**：探针 + 宿主验证。还没有做真正的分屏。
 
@@ -15,17 +15,17 @@ CarPlay 分屏实验。目标：**左半屏一个真实 App（滴滴车主端）
 
 ## 安装
 
-从 Actions 的 `cockpit-deb` artifact 下载，然后：
+从 Actions 的 `dashsplit-deb` artifact 下载，然后：
 
 ```sh
-scp lilliana.cockpit_*_iphoneos-arm64.deb root@<iphone-ip>:/var/mobile/
+scp lilliana.dashsplit_*_iphoneos-arm64.deb root@<iphone-ip>:/var/mobile/
 ssh root@<iphone-ip>
-/var/jb/usr/bin/dpkg -i /var/mobile/lilliana.cockpit_*_iphoneos-arm64.deb
+/var/jb/usr/bin/dpkg -i /var/mobile/lilliana.dashsplit_*_iphoneos-arm64.deb
 killall -9 SpringBoard
 ```
 
 > 会注入 SpringBoard。如果出现无限重启，用 Dopamine 关闭 tweak 注入后重启，或删掉
-> `/var/jb/Library/MobileSubstrate/DynamicLibraries/Cockpit.dylib`。
+> `/var/jb/Library/MobileSubstrate/DynamicLibraries/DashSplit.dylib`。
 
 ## SSH 部署（推荐）
 
@@ -52,27 +52,27 @@ type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@<手机IP> "mkdir -p /var/r
 **日常用法：**
 
 ```powershell
-# 装最新一版（CI 每次构建都会更新 cockpit-latest 这个 release）
+# 装最新一版（CI 每次构建都会更新 dashsplit-latest 这个 release）
 # 也可以先设一次 $env:COCKPIT_DEVICE="192.168.1.23"，之后省略 -Device
-.\Cockpit\deploy.ps1 -Device 192.168.1.23 -Latest
+./deploy.ps1 -Device 192.168.1.23 -Latest
 
 # 装本地某个包
-.\Cockpit\deploy.ps1 -Device 192.168.1.23 -Deb .\Cockpit\packages\lilliana.cockpit_0.0.4_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\lilliana.dashsplit_0.1.0_iphoneos-arm64.deb
 
 # 只看日志（不装包）
-.\Cockpit\deploy.ps1 -Device 192.168.1.23 -LogOnly -Tail 120
+./deploy.ps1 -Device 192.168.1.23 -LogOnly -Tail 120
 
 # 实时跟日志
-.\Cockpit\deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow
+./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow
 
 # 装完不 respring（只换文件）
-.\Cockpit\deploy.ps1 -Device 192.168.1.23 -Latest -NoRespring
+./deploy.ps1 -Device 192.168.1.23 -Latest -NoRespring
 
 # 顺手把日志存到本地
-.\Cockpit\deploy.ps1 -Device 192.168.1.23 -LogOnly -SaveLog .\cockpit.log
+./deploy.ps1 -Device 192.168.1.23 -LogOnly -SaveLog .\dashsplit.log
 ```
 
-脚本做的事：确认能连上 → `scp` 到 `/var/mobile/cockpit.deb` → `dpkg -i` → 确认 dylib 落地 → `killall -9 SpringBoard` → 等 8 秒 → 打印 `/var/mobile/Library/Logs/Cockpit.log`。
+脚本做的事：确认能连上 → `scp` 到 `/var/mobile/dashsplit.deb` → `dpkg -i` → 确认 dylib 落地 → `killall -9 SpringBoard` → 等 8 秒 → 打印 `/var/mobile/Library/Logs/DashSplit.log`。
 
 **连不上时：**
 
@@ -83,7 +83,7 @@ type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@<手机IP> "mkdir -p /var/r
 
 ## 配置
 
-配置文件：`/var/mobile/Library/Preferences/lilliana.cockpit.plist`
+配置文件：`/var/mobile/Library/Preferences/lilliana.dashsplit.plist`
 
 ```xml
 <dict>
@@ -105,7 +105,7 @@ type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@<手机IP> "mkdir -p /var/r
    也可以不用 plist，直接建一个纯文本文件，内容只写包名：
 
    ```
-   /var/mobile/Library/Preferences/lilliana.cockpit.host
+   /var/mobile/Library/Preferences/lilliana.dashsplit.host
    ```
 
 `HostBundleID` 不知道的话，用 Filza 找到那个 App 的 `.app` 目录，看里面 `Info.plist` 的 `CFBundleIdentifier`；或者在 SSH 里：
@@ -123,7 +123,7 @@ done | grep -i didi
 1. 建一个空文件（推荐，Filza 里「新建文件」即可）：
 
 ```
-/var/mobile/Library/Preferences/lilliana.cockpit.test
+/var/mobile/Library/Preferences/lilliana.dashsplit.test
 ```
 
 2. 或者在 plist 里写 `<key>TestOnMainScreen</key><true/>`
@@ -144,13 +144,13 @@ done | grep -i didi
 创建空文件即可，下次 SpringBoard 启动时完全不加载逻辑：
 
 ```sh
-touch /var/mobile/Library/Preferences/lilliana.cockpit.off
+touch /var/mobile/Library/Preferences/lilliana.dashsplit.off
 ```
 
 如果托管时 SpringBoard 真的崩了，崩溃处理器会留下标记：
 
 ```
-/var/mobile/Library/Preferences/lilliana.cockpit.crashed
+/var/mobile/Library/Preferences/lilliana.dashsplit.crashed
 ```
 
 下次启动看到它只显示蓝色探针、**不托管 App**，并自动删掉标记；再 respring 一次就会重新尝试托管。正常的 respring 不会写这个文件，所以不会误跳过。想立刻恢复托管，删掉它再 respring。
@@ -158,7 +158,7 @@ touch /var/mobile/Library/Preferences/lilliana.cockpit.off
 想让 App 用一个**独立的场景**而不是系统默认场景（避免和桌面上的同一个 App 抢），建这个文件再 respring：
 
 ```
-/var/mobile/Library/Preferences/lilliana.cockpit.newscene
+/var/mobile/Library/Preferences/lilliana.dashsplit.newscene
 ```
 
 日志里会打 `host: newSceneIdentityForApplication: = ...`。iOS 16.3 上对不支持多窗口的 App（包括设置）它会直接返回默认场景 `-default`，也就是**没效果**。
@@ -178,7 +178,7 @@ mode: live applied=1
 想手动改成其它行为，建这个文本文件，内容写一个数字（就是要传给 `_setCurrentMode:` 的值），或者写 `none`：
 
 ```
-/var/mobile/Library/Preferences/lilliana.cockpit.mode
+/var/mobile/Library/Preferences/lilliana.dashsplit.mode
 ```
 
 - 不建文件 / 写 `auto`：等 App 起来再切 Live（推荐）
@@ -187,9 +187,9 @@ mode: live applied=1
 
 ## 日志
 
-`/var/mobile/Library/Logs/Cockpit.log`（256 KB 轮转），记录：
+`/var/mobile/Library/Logs/DashSplit.log`（256 KB 轮转），记录：
 
-- `--- Cockpit 0.0.11 loaded ---`：tweak 被加载
+- `--- DashSplit 0.0.11 loaded ---`：tweak 被加载
 - `probe: screens`：车机屏是否被识别，`car=1` / `carplay=1`
 - `make window: ...`：窗口是否创建成功，frame 是多少
 - `ui: no HostBundleID set, probe only`：没有配置宿主的 App

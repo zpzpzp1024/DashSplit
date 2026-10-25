@@ -7,15 +7,15 @@ export THEOS_PLATFORM_DEB_COMPRESSION_TYPE = xz
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = Cockpit
-Cockpit_FILES = Sources/Cockpit.mm
-Cockpit_FRAMEWORKS = UIKit Foundation QuartzCore
-Cockpit_CFLAGS = -fobjc-arc
+TWEAK_NAME = DashSplit
+DashSplit_FILES = Sources/DashSplit.mm
+DashSplit_FRAMEWORKS = UIKit Foundation QuartzCore
+DashSplit_CFLAGS = -fobjc-arc
 
 # Rootless install location, same as the other tweaks on this device.
-Cockpit_INSTALL_PATH = /var/jb/Library/MobileSubstrate/DynamicLibraries
+DashSplit_INSTALL_PATH = /var/jb/Library/MobileSubstrate/DynamicLibraries
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 internal-stage::
-	@echo "Cockpit staged at $(THEOS_STAGING_DIR)"
+	@echo "DashSplit staged at $(THEOS_STAGING_DIR)"
