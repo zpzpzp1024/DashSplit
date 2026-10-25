@@ -1031,6 +1031,7 @@ static void TeardownAllHosts(void)
 #pragma mark - UI
 
 static UIWindow *gWindow;
+static UIWindow *gButtonWindow;
 static UIView *gPanes[2];
 static UIView *gDivider;
 static BOOL gTestMode;
@@ -1085,10 +1086,17 @@ static void RestoreSlot(int index)
         // a controller holding Live while its scene gets occluded is the
         // classic foreground-consistency crash trigger (0.0.19 knew this).
         gUserClosed = YES;
-        for (int index = 0; index < 2; index++) {
-            if (gPanes[index]) gPanes[index].hidden = YES;
+        if (gButtonWindow) {
+            // Phone test mode: hide the WHOLE overlay window. A full-screen
+            // window attached to SpringBoard's own scene swallows touches
+            // even with every subview hidden, locking the phone's UI.
+            if (gWindow) gWindow.hidden = YES;
+        } else {
+            for (int index = 0; index < 2; index++) {
+                if (gPanes[index]) gPanes[index].hidden = YES;
+            }
+            if (gDivider) gDivider.hidden = YES;
         }
-        if (gDivider) gDivider.hidden = YES;
         SetToggleGlyph(@"⟳");
         for (int index = 0; index < 2; index++) {
             SlotSetMode(index, 0);
@@ -1096,10 +1104,14 @@ static void RestoreSlot(int index)
         CLog(@"ui: overlay hidden by user (hosting kept alive)");
     } else {
         gUserClosed = NO;
-        for (int index = 0; index < 2; index++) {
-            if (gPanes[index]) gPanes[index].hidden = NO;
+        if (gButtonWindow) {
+            if (gWindow) gWindow.hidden = NO;
+        } else {
+            for (int index = 0; index < 2; index++) {
+                if (gPanes[index]) gPanes[index].hidden = NO;
+            }
+            if (gDivider) gDivider.hidden = NO;
         }
-        if (gDivider) gDivider.hidden = NO;
         SetToggleGlyph(@"✕");
         for (int index = 0; index < 2; index++) {
             RestoreSlot(index);
@@ -1146,7 +1158,9 @@ static void Layout(void)
     // never received taps (0.0.20/0.0.21 logs show zero toggleTapped calls).
     if (gToggleButton) {
         gToggleButton.frame = CGRectMake(8, 8, 48, 48);
-        [gWindow bringSubviewToFront:gToggleButton];
+        if (gToggleButton.superview == gWindow) {
+            [gWindow bringSubviewToFront:gToggleButton];
+        }
     }
 }
 
@@ -1231,8 +1245,34 @@ static void CreateInterface(BOOL testMode)
     toggle.layer.cornerRadius = 24;
     toggle.layer.zPosition = 9999;
     [toggle addTarget:gControl action:@selector(toggleTapped) forControlEvents:UIControlEventTouchUpInside];
-    [window addSubview:toggle];
-    
+
+    if (testMode) {
+        // Phone test mode: the button lives in its own tiny window so
+        // hiding the overlay can hide the WHOLE main window (see
+        // toggleTapped). A second window inside SpringBoard's own scene
+        // receives taps fine — the car display was the only place that
+        // did not (0.0.20/0.0.21 logs).
+        UIWindow *buttonWindow = nil;
+        for (UIScene *scene in [[UIApplication sharedApplication] connectedScenes]) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+                buttonWindow = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+                break;
+            }
+        }
+        if (!buttonWindow) {
+            buttonWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 64, 64)];
+        }
+        buttonWindow.frame = CGRectMake(0, 0, 64, 64);
+        buttonWindow.windowLevel = 10000000;
+        buttonWindow.backgroundColor = [UIColor clearColor];
+        buttonWindow.hidden = NO;
+        [buttonWindow addSubview:toggle];
+        toggle.frame = CGRectMake(8, 8, 48, 48);
+        gButtonWindow = buttonWindow;
+    } else {
+        [window addSubview:toggle];
+    }
+
     gWindow = window;
     gToggleButton = toggle;
     
@@ -1338,9 +1378,10 @@ static void Tick(void)
         BOOL testMode = (!carConnected && TestModeEnabled());
         
         if (!carConnected && !testMode) {
-            if (gWindow && !gWindow.hidden) {
+            if (gWindow && (!gWindow.hidden || (gButtonWindow && !gButtonWindow.hidden))) {
                 TeardownAllHosts();
                 gWindow.hidden = YES;
+                gButtonWindow.hidden = YES;
                 CLog(@"lifecycle: car display gone, window hidden");
             }
             return;
@@ -1351,6 +1392,10 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
+                if (gButtonWindow) {
+                    gButtonWindow.hidden = YES;
+                    gButtonWindow = nil;
+                }
                 gPanes[0] = nil;
                 gPanes[1] = nil;
                 gDivider = nil;
@@ -1389,7 +1434,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.10 loaded ---");
+        CLog(@"--- DashSplit 0.1.11 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
