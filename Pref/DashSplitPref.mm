@@ -99,64 +99,48 @@ static NSArray *InstalledApps(void)
     self.title = @"车载分屏";
 }
 
-- (PSSpecifier *)appPickerNamed:(NSString *)title key:(NSString *)key defaultID:(NSString *)defaultID
+// The rows live in specs.plist (cell classes as strings — the public SDK
+// declares the PSSpecifier constructor's cell argument as an undocumented
+// PSCellType enum, so the plist route is the one that compiles). The two
+// picker rows get their dynamic titles/values injected here, matching the
+// row order in the plist: 0 toggle, 1 left, 2 right, 3 note.
+- (void)configurePicker:(PSSpecifier *)specifier key:(NSString *)key defaultID:(NSString *)defaultID
 {
     NSArray *apps = InstalledApps();
-    NSMutableArray *names = [NSMutableArray arrayWithObject:defaultID];
-    NSMutableArray *ids = [NSMutableArray arrayWithObject:defaultID];
+    NSMutableArray *names = [NSMutableArray array];
+    NSMutableArray *ids = [NSMutableArray array];
+    NSString *defaultName = defaultID;
+    for (NSDictionary *app in apps) {
+        if ([app[@"id"] isEqualToString:defaultID]) {
+            defaultName = app[@"name"];
+            break;
+        }
+    }
+    [names addObject:defaultName];
+    [ids addObject:defaultID];
     for (NSDictionary *app in apps) {
         [names addObject:app[@"name"]];
         [ids addObject:app[@"id"]];
     }
-    // Show the default by its own name when it is among the installed apps.
-    for (NSDictionary *app in apps) {
-        if ([app[@"id"] isEqualToString:defaultID]) {
-            names[0] = app[@"name"];
-            break;
-        }
-    }
 
-    PSSpecifier *specifier = [PSSpecifier preferenceSpecifierNamed:title
-                                                            target:self
-                                                               set:@selector(setAppValue:forSpecifier:)
-                                                               get:@selector(getAppValue:)
-                                                            detail:[PSListItemsController class]
-                                                              cell:NSClassFromString(@"PSLinkListCell")
-                                                              edit:NULL];
     [specifier setProperty:names forKey:@"titles"];
     [specifier setProperty:ids forKey:@"values"];
     [specifier setProperty:key forKey:@"prefsKey"];
     [specifier setProperty:defaultID forKey:@"prefsDefault"];
-    return specifier;
 }
 
 - (NSArray *)specifiers
 {
     if (_specifiers == nil) {
-        NSMutableArray *specs = [NSMutableArray array];
-
-        PSSpecifier *toggle = [PSSpecifier preferenceSpecifierNamed:@"启用分屏"
-                                                              target:self
-                                                                 set:@selector(setEnabledValue:forSpecifier:)
-                                                                 get:@selector(getEnabledValue:)
-                                                              detail:nil
-                                                                cell:NSClassFromString(@"PSSwitchCell")
-                                                                edit:NULL];
-        [specs addObject:toggle];
-
-        [specs addObject:[self appPickerNamed:@"左半屏应用" key:kKeyLeft defaultID:kDefaultLeft]];
-        [specs addObject:[self appPickerNamed:@"右半屏应用" key:kKeyRight defaultID:kDefaultRight]];
-
-        PSSpecifier *note = [PSSpecifier preferenceSpecifierNamed:@"更改后重新连接 CarPlay 生效；左右选同一应用时只投左屏"
-                                                            target:self
-                                                               set:NULL
-                                                               get:NULL
-                                                            detail:nil
-                                                              cell:NSClassFromString(@"PSTitleValueCell")
-                                                              edit:NULL];
-        [specs addObject:note];
-
-        _specifiers = specs;
+        _specifiers = [self loadSpecifiersFromPlistName:@"specs" target:self];
+        if ([_specifiers count] >= 3) {
+            if ([_specifiers[1] isKindOfClass:[PSSpecifier class]]) {
+                [self configurePicker:_specifiers[1] key:kKeyLeft defaultID:kDefaultLeft];
+            }
+            if ([_specifiers[2] isKindOfClass:[PSSpecifier class]]) {
+                [self configurePicker:_specifiers[2] key:kKeyRight defaultID:kDefaultRight];
+            }
+        }
     }
     return _specifiers;
 }
