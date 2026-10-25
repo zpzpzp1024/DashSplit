@@ -1,5 +1,9 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.2: swallow the scene-foreground assertion at +[NSException raise:format:]
+// (the raise variant that slipped past the other hooks); the
+// objc_exception_throw hook is log-only now — swallowing there segfaults the
+// noreturn caller (0.1.1 log: signal 11 after a throw-level swallow).
 // 0.1.1: Settings pane (车载分屏) to pick the left/right pane apps;
 // objc_exception_throw hooked via MSHookFunction (the raise-only hooks let
 // one assertion through and resprung SpringBoard); same-app-on-both-panes
@@ -579,16 +583,15 @@ static void DashSplitRaiseClass(id self, SEL _cmd, NSString *name, NSString *for
     ((void (*)(id, SEL, NSString *, NSString *, va_list))gOriginalClassRaise)(self, _cmd, name, format, args);
 }
 
-// 0.1.1: the raise hooks above are not enough — the 0.1.0 log shows the
-// assertion raised through Foundation internals straight into
-// objc_exception_throw, bypassing both hooked entry points (uncaught →
-// SpringBoard abort → respring). MSHookFunction on objc_exception_throw is
-// the single choke point every throw must pass, whichever raise variant the
-// framework used. CydiaSubstrate/ElleKit exports MSHookFunction in every
-// process it injects, so dlsym(RTLD_DEFAULT) finds it.
 // Not declared by the public objc headers we import — declare it ourselves.
 extern "C" void objc_exception_throw(id exception);
 
+// 0.1.1 hooked objc_exception_throw with MSHookFunction to catch raises the
+// method hooks miss. 0.1.2: this hook NEVER swallows — returning from inside
+// objc_exception_throw segfaults the caller (compiled as noreturn; the 0.1.1
+// log shows signal 11 immediately after a throw-level swallow). It stays
+// installed purely as a detector: if the target assertion ever reaches this
+// point, the method-level hooks missed it and we want that in the log.
 static void (*gOriginalObjcExceptionThrow)(id exception);
 
 static void DashSplitExceptionThrowHook(id exception)
@@ -597,15 +600,57 @@ static void DashSplitExceptionThrowHook(id exception)
         if ([exception isKindOfClass:[NSException class]]) {
             NSException *nsException = (NSException *)exception;
             if (DashSplitShouldSwallow([nsException name], [nsException reason])) {
-                CLog(@"assert: swallowed scene foreground assertion (objc_exception_throw)");
+                CLog(@"assert: foreground assertion reached objc_exception_throw (raise hooks missed it), passing through");
                 DashSplitResyncAfterSwallow([nsException reason] ?: @"");
-                return;   // swallow: never reach the real throw
             }
         }
     } @catch (__unused NSException *ignored) { }
     if (gOriginalObjcExceptionThrow) {
         gOriginalObjcExceptionThrow(exception);
     }
+}
+
+// 0.1.2: the assertion that slipped through every raise hook was raised via
+// +[NSException raise:format:] — a variadic class method whose IMP does NOT
+// re-dispatch through +raise:format:arguments:, so hooking only the latter
+// missed it (0.1.0/0.1.1 logs). Swallowing inside objc_exception_throw
+// instead SEGVs: throw's caller is compiled as noreturn, and returning from
+// the hook makes it run off the rail (0.1.1 log: signal 11 right after the
+// swallow). +raise:format: has SAFE swallow semantics: its caller is
+// SpringBoard's assert macro, which tolerates the raise returning — the same
+// caller the -raise hook swallowed successfully in 0.0.10.
+static IMP gOriginalRaiseFormat;
+
+static void DashSplitRaiseFormat(id self, SEL _cmd, NSString *name, NSString *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+
+    BOOL swallow = NO;
+    NSString *reason = nil;
+    if (format) {
+        va_list copy;
+        va_copy(copy, args);
+        @try { reason = [[NSString alloc] initWithFormat:format arguments:copy]; } @catch (...) {}
+        va_end(copy);
+        swallow = DashSplitShouldSwallow(name, reason);
+    }
+
+    if (swallow) {
+        CLog(@"assert: swallowed scene foreground assertion (+raise:format:)");
+        DashSplitResyncAfterSwallow(reason ?: @"");
+        va_end(args);
+        return;
+    }
+
+    if (gOriginalClassRaise) {
+        // Forward the INTACT va_list to the original +raise:format:arguments:
+        // implementation — the canonical noreturn path.
+        ((void (*)(id, SEL, NSString *, NSString *, va_list))gOriginalClassRaise)(self, @selector(raise:format:arguments:), name, format, args);
+    } else {
+        objc_exception_throw([[NSException alloc] initWithName:name reason:reason ?: @"" userInfo:nil]);
+    }
+    va_end(args);   // unreachable in practice (raise never returns)
 }
 
 static void InstallExceptionFilter(void)
@@ -618,6 +663,10 @@ static void InstallExceptionFilter(void)
     if (classMethod) {
         gOriginalClassRaise = method_setImplementation(classMethod, (IMP)DashSplitRaiseClass);
     }
+    Method raiseFormatMethod = class_getClassMethod([NSException class], @selector(raise:format:));
+    if (raiseFormatMethod) {
+        gOriginalRaiseFormat = method_setImplementation(raiseFormatMethod, (IMP)DashSplitRaiseFormat);
+    }
 
     void *(*hookFunction)(void *, void *, void **) =
         (void *(*)(void *, void *, void **))dlsym(RTLD_DEFAULT, "MSHookFunction");
@@ -627,9 +676,9 @@ static void InstallExceptionFilter(void)
         gOriginalObjcExceptionThrow = (void (*)(id))original;
     }
 
-    CLog(@"filter: raise hooks instance=%d class=%d, objc_exception_throw hooked=%d",
+    CLog(@"filter: raise hooks instance=%d class=%d format=%d, objc_exception_throw hooked=%d",
          gOriginalInstanceRaise != NULL, gOriginalClassRaise != NULL,
-         gOriginalObjcExceptionThrow != NULL);
+         gOriginalRaiseFormat != NULL, gOriginalObjcExceptionThrow != NULL);
 }
 
 #pragma mark - Hosting sequence
@@ -1320,7 +1369,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.1 loaded ---");
+        CLog(@"--- DashSplit 0.1.2 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
