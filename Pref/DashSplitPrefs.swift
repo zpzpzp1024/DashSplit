@@ -1,15 +1,11 @@
 // DashSplit preferences pane — the 车载分屏 page in Settings.
 //
-// 0.1.7: rebuilt in Swift on JinxPrefs, mirroring Reverie's pane structure
-// exactly (its pane is proven on the target device). The ObjC version built
-// its rows through objc_msgSend with a cell CLASS where the constructor takes
-// a PSCellType enum value — rows never materialised and the page rendered
-// blank. JinxPrefs compiles against the same headers Reverie uses, so the
-// enum values are correct by construction here.
-//
-// The two app pickers use PSListItemsController with dynamic titles/values
-// from LSApplicationWorkspace; picking writes the bundle ID straight into
-// the plist file the tweak reads. Changes apply the next CarPlay connect.
+// 0.1.8: the app pickers are our own controller pages (one PSButtonCell row
+// per app) instead of PSListItemsController detail rows, which crashed
+// Settings on open on the target device. Everything here uses the row types
+// Reverie's proven pane uses (GroupCell/ToggleCell/ButtonCell machinery via
+// JinxPrefs). Selecting an app writes the bundle ID straight into the plist
+// file the tweak reads; changes apply the next CarPlay connect.
 
 import Preferences
 import UIKit
@@ -32,6 +28,10 @@ private func savePrefs(_ prefs: [String: Any]) {
 private func stringValue(_ prefs: [String: Any], _ key: String, _ fallback: String) -> String {
     if let value = prefs[key] as? String, !value.isEmpty { return value }
     return fallback
+}
+
+private func appName(for bundleID: String, apps: [[String: String]]) -> String {
+    apps.first(where: { $0["id"] == bundleID })?["name"] ?? bundleID
 }
 
 // Every installed app the user could reasonably pick: user apps plus system
@@ -76,6 +76,101 @@ private func installedApps() -> [[String: String]] {
     return apps
 }
 
+// Per-row tap target for the picker list. PSButtonCell invokes the action
+// on the specifier's target; a dedicated object per row carries the bundle
+// ID without touching selector arity (Reverie's 0-arg button pattern).
+private final class AppRowTarget: NSObject {
+    let bundleID: String
+    let paneKey: String
+    weak var picker: AppPickerController?
+
+    init(bundleID: String, paneKey: String, picker: AppPickerController?) {
+        self.bundleID = bundleID
+        self.paneKey = paneKey
+        self.picker = picker
+    }
+
+    @objc func selectApp() {
+        var prefs = loadPrefs()
+        prefs[paneKey] = bundleID
+        savePrefs(prefs)
+        NSLog("[DashSplitPref] set %@ = %@", paneKey, bundleID)
+        picker?.navigationController?.popViewController(animated: true)
+    }
+}
+
+class AppPickerController: PSListController {
+    var paneKey: String { "" }
+    var paneTitle: String { "" }
+    var fallbackID: String { "" }
+
+    private var rowTargets: [AppRowTarget] = []
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = paneTitle
+    }
+
+    override var specifiers: NSMutableArray? {
+        get {
+            if let specifiers = value(forKey: "_specifiers") as? NSMutableArray {
+                return specifiers
+            }
+
+            let apps = installedApps()
+            let current = stringValue(loadPrefs(), paneKey, fallbackID)
+            rowTargets = []
+
+            var specifiers = NSMutableArray()
+            // Current selection first, then everything else.
+            specifiers.add(PSSpecifier.emptyGroup())
+            if let currentRow = buttonRow(name: "当前:" + appName(for: current, apps: apps), bundleID: current) {
+                specifiers.add(currentRow)
+            }
+            for app in apps where app["id"] != current {
+                if let row = buttonRow(name: app["name"] ?? "", bundleID: app["id"] ?? "") {
+                    specifiers.add(row)
+                }
+            }
+
+            setValue(specifiers, forKey: "_specifiers")
+            return specifiers
+        }
+        set { super.specifiers = newValue }
+    }
+
+    private func buttonRow(name: String, bundleID: String) -> PSSpecifier? {
+        let target = AppRowTarget(bundleID: bundleID, paneKey: paneKey, picker: self)
+        rowTargets.append(target)
+
+        let row = PSSpecifier.preferenceSpecifierNamed(
+            name,
+            target: target,
+            set: nil,
+            get: nil,
+            detail: nil,
+            cell: .buttonCell,
+            edit: nil
+        )
+        row?.buttonAction = #selector(AppRowTarget.selectApp)
+        return row
+    }
+}
+
+@objc(DashSplitLeftAppPicker)
+final class DashSplitLeftAppPicker: AppPickerController {
+    override var paneKey: String { keyLeft }
+    override var paneTitle: String { "左半屏应用" }
+    override var fallbackID: String { defaultLeft }
+}
+
+@objc(DashSplitRightAppPicker)
+final class DashSplitRightAppPicker: AppPickerController {
+    override var paneKey: String { keyRight }
+    override var paneTitle: String { "右半屏应用" }
+    override var fallbackID: String { defaultRight }
+}
+
 @objc(DashSplitPrefListController)
 final class DashSplitPrefListController: PSListController {
     override func viewDidLoad() {
@@ -86,32 +181,19 @@ final class DashSplitPrefListController: PSListController {
         title = "车载分屏"
     }
 
-    private func appPicker(_ title: String, key: String, defaultID: String) -> PSSpecifier? {
+    // A link row per pane that shows the current pick in its title.
+    private func paneRow(_ title: String, current: String, detail: AnyClass) -> PSSpecifier? {
         let apps = installedApps()
-        let defaultName = apps.first(where: { $0["id"] == defaultID })?["name"] ?? defaultID
-
-        var names = [defaultName]
-        var ids = [defaultID]
-        for app in apps {
-            names.append(app["name"] ?? "")
-            ids.append(app["id"] ?? "")
-        }
-
-        let picker = PSSpecifier.preferenceSpecifierNamed(
-            title,
+        let row = PSSpecifier.preferenceSpecifierNamed(
+            "\(title):\(appName(for: current, apps: apps))",
             target: self,
-            set: #selector(setAppValue(_:forSpecifier:)),
-            get: #selector(getAppValue(_:)),
-            detail: PSListItemsController.self,
-            cell: .linkListCell,
+            set: nil,
+            get: nil,
+            detail: detail,
+            cell: .linkCell,
             edit: nil
         )
-        picker?.identifier = key
-        picker?.setProperty(names, forKey: "titles")
-        picker?.setProperty(ids, forKey: "values")
-        picker?.setProperty(key, forKey: "prefsKey")
-        picker?.setProperty(defaultID, forKey: "prefsDefault")
-        return picker
+        return row
     }
 
     override var specifiers: NSMutableArray? {
@@ -120,6 +202,7 @@ final class DashSplitPrefListController: PSListController {
                 return specifiers
             }
 
+            let prefs = loadPrefs()
             var specifiers = NSMutableArray()
             SpecifierFactory.add([
                 GroupCell(
@@ -132,13 +215,13 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "分屏应用",
-                    footerText: "更改后重新连接 CarPlay 生效;两个半屏选择同一个 App 时,只会投屏左半屏。"
+                    footerText: "点进去选择 App;更改后重新连接 CarPlay 生效;两个半屏选同一个 App 时只投左半屏。"
                 )
             ], to: &specifiers, in: self)
-            if let left = appPicker("左半屏应用", key: keyLeft, defaultID: defaultLeft) {
+            if let left = paneRow("左半屏应用", current: stringValue(prefs, keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
                 specifiers.add(left)
             }
-            if let right = appPicker("右半屏应用", key: keyRight, defaultID: defaultRight) {
+            if let right = paneRow("右半屏应用", current: stringValue(prefs, keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
                 specifiers.add(right)
             }
 
@@ -148,20 +231,11 @@ final class DashSplitPrefListController: PSListController {
         set { super.specifiers = newValue }
     }
 
-    @objc func setAppValue(_ value: Any, forSpecifier specifier: PSSpecifier) {
-        guard let key = specifier.property(forKey: "prefsKey") as? String,
-              let bundleID = value as? String
-        else { return }
-        var prefs = loadPrefs()
-        prefs[key] = bundleID
-        savePrefs(prefs)
-        NSLog("[DashSplitPref] set %@ = %@", key, bundleID)
-        reloadSpecifier(specifier)
-    }
-
-    @objc func getAppValue(_ specifier: PSSpecifier) -> Any {
-        let key = (specifier.property(forKey: "prefsKey") as? String) ?? keyLeft
-        let fallback = (specifier.property(forKey: "prefsDefault") as? String) ?? defaultLeft
-        return stringValue(loadPrefs(), key, fallback)
+    // Refresh the pane rows (they show the current pick in their titles)
+    // when coming back from a picker page.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        setValue(nil, forKey: "_specifiers")
+        perform(NSSelectorFromString("reloadSpecifiers"))
     }
 }
