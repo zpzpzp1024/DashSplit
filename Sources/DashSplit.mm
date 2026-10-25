@@ -78,8 +78,9 @@ static NSString *const kPrefsHostApp2 = @"HostBundleID2";
 static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
 
-static NSString *const kDefaultHost1 = @"com.xiaojukeji.didi";
-static NSString *const kDefaultHost2 = @"com.autonavi.amap";
+// Uninstallable system apps: the defaults must exist on every device.
+static NSString *const kDefaultHost1 = @"com.apple.Preferences";
+static NSString *const kDefaultHost2 = @"com.apple.AppStore";
 static CGFloat const kSplitRatio = 0.6;
 
 #pragma mark - Logging
@@ -216,12 +217,12 @@ static BOOL FileExists(NSString *path)
     return [[NSFileManager defaultManager] fileExistsAtPath:path];
 }
 
+// The Settings toggle is the only switch (0.1.12); the old marker-file
+// escape hatch is gone — a leftover file kept test mode ON while the
+// toggle showed OFF. Leftovers are deleted at startup.
 static BOOL TestModeEnabled(void)
 {
-    if (PrefBool(kPrefsTestMain, NO)) {
-        return YES;
-    }
-    return FileExists(@COCKPIT_TEST);
+    return PrefBool(kPrefsTestMain, NO);
 }
 
 static NSString *HostBundleID1(void)
@@ -1434,7 +1435,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.11 loaded ---");
+        CLog(@"--- DashSplit 0.1.12 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
@@ -1451,6 +1452,10 @@ static void DashSplitInit(void)
         }
         
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            if (FileExists(@COCKPIT_TEST)) {
+                [[NSFileManager defaultManager] removeItemAtPath:@COCKPIT_TEST error:nil];
+                CLog(@"init: removed leftover test marker file (test mode is toggle-only now)");
+            }
             LogPrefsState();
             LogHostingAPI();
             DumpProbe();

@@ -14,8 +14,9 @@ private let prefsFile = "/var/mobile/Library/Preferences/lilliana.dashsplit.plis
 private let keyEnabled = "Enabled"
 private let keyLeft = "HostBundleID"
 private let keyRight = "HostBundleID2"
-private let defaultLeft = "com.xiaojukeji.didi"
-private let defaultRight = "com.autonavi.amap"
+// Uninstallable system apps: the defaults must exist on every device.
+private let defaultLeft = "com.apple.Preferences"
+private let defaultRight = "com.apple.AppStore"
 
 private let prefsDomain = "lilliana.dashsplit" as CFString
 
@@ -98,6 +99,12 @@ private final class AppRowTarget: NSObject {
     @objc func selectApp() {
         setPref(bundleID, forKey: paneKey)
         NSLog("[DashSplitPref] set %@ = %@", paneKey, bundleID)
+        // Refresh the parent pane's rows deterministically — relying on
+        // viewWillAppear alone left the row titles stale after a pick.
+        if let nav = picker?.navigationController, nav.viewControllers.count >= 2,
+           let parent = nav.viewControllers[nav.viewControllers.count - 2] as? DashSplitPrefListController {
+            parent.refreshPane()
+        }
         picker?.navigationController?.popViewController(animated: true)
     }
 }
@@ -250,11 +257,17 @@ final class DashSplitPrefListController: PSListController {
         set { super.specifiers = newValue }
     }
 
+    // Drop the cached specifiers and rebuild, so the pane rows pick up the
+    // current selections in their titles.
+    @objc func refreshPane() {
+        setValue(nil, forKey: "_specifiers")
+        perform(NSSelectorFromString("reloadSpecifiers"))
+    }
+
     // Refresh the pane rows (they show the current pick in their titles)
     // when coming back from a picker page.
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        setValue(nil, forKey: "_specifiers")
-        perform(NSSelectorFromString("reloadSpecifiers"))
+        refreshPane()
     }
 }
