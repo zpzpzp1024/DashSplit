@@ -38,11 +38,15 @@ static Class DashSplitPaneController(void)
 static BOOL IsRootSettingsList(id controller)
 {
     UIWindow *window = nil;
-    for (UIWindow *candidate in [UIApplication sharedApplication].windows) {
-        if (candidate.isKeyWindow) {
-            window = candidate;
-            break;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *candidate in ((UIWindowScene *)scene).windows) {
+            if (candidate.isKeyWindow) {
+                window = candidate;
+                break;
+            }
         }
+        if (window) break;
     }
     UINavigationController *navigation = [window.rootViewController isKindOfClass:[UINavigationController class]]
         ? (UINavigationController *)window.rootViewController
@@ -69,7 +73,7 @@ static NSArray *DashSplitSpecifiers(id self, SEL _cmd)
     // enum, so build the specifier through objc_msgSend instead.
     SEL ctor = NSSelectorFromString(@"preferenceSpecifierNamed:target:action:set:get:detail:cell:edit:");
     if (![PSSpecifier respondsToSelector:ctor]) return specifiers;
-    PSSpecifier *row = ((PSSpecifier *(*)(id, SEL, id, SEL, SEL, SEL, Class, Class, Class))objc_msgSend)
+    PSSpecifier *row = ((PSSpecifier *(*)(id, SEL, id, id, SEL, SEL, SEL, Class, Class, Class))objc_msgSend)
         ([PSSpecifier class], ctor,
          @"车载分屏", nil, NULL, NULL, NULL,
          pane, NSClassFromString(@"PSLinkCell"), nil);
