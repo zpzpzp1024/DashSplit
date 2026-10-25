@@ -1,5 +1,10 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.1: Settings pane (车载分屏) to pick the left/right pane apps;
+// objc_exception_throw hooked via MSHookFunction (the raise-only hooks let
+// one assertion through and resprung SpringBoard); same-app-on-both-panes
+// guard (hosts left pane only).
+// 0.1.0: standalone repo, renamed from Cockpit.
 // 0.1.0: button looks identically semi-transparent in every state (custom
 // type, no press dimming); re-fit the pane scale transform on restore and
 // health nudges (the background->foreground cycle resets it, which made
@@ -574,6 +579,32 @@ static void DashSplitRaiseClass(id self, SEL _cmd, NSString *name, NSString *for
     ((void (*)(id, SEL, NSString *, NSString *, va_list))gOriginalClassRaise)(self, _cmd, name, format, args);
 }
 
+// 0.1.1: the raise hooks above are not enough — the 0.1.0 log shows the
+// assertion raised through Foundation internals straight into
+// objc_exception_throw, bypassing both hooked entry points (uncaught →
+// SpringBoard abort → respring). MSHookFunction on objc_exception_throw is
+// the single choke point every throw must pass, whichever raise variant the
+// framework used. CydiaSubstrate/ElleKit exports MSHookFunction in every
+// process it injects, so dlsym(RTLD_DEFAULT) finds it.
+static void (*gOriginalObjcExceptionThrow)(id exception);
+
+static void DashSplitExceptionThrowHook(id exception)
+{
+    @try {
+        if ([exception isKindOfClass:[NSException class]]) {
+            NSException *nsException = (NSException *)exception;
+            if (DashSplitShouldSwallow([nsException name], [nsException reason])) {
+                CLog(@"assert: swallowed scene foreground assertion (objc_exception_throw)");
+                DashSplitResyncAfterSwallow([nsException reason] ?: @"");
+                return;   // swallow: never reach the real throw
+            }
+        }
+    } @catch (__unused NSException *ignored) { }
+    if (gOriginalObjcExceptionThrow) {
+        gOriginalObjcExceptionThrow(exception);
+    }
+}
+
 static void InstallExceptionFilter(void)
 {
     Method instanceMethod = class_getInstanceMethod([NSException class], @selector(raise));
@@ -584,8 +615,18 @@ static void InstallExceptionFilter(void)
     if (classMethod) {
         gOriginalClassRaise = method_setImplementation(classMethod, (IMP)DashSplitRaiseClass);
     }
-    CLog(@"filter: NSException raise hooks installed instance=%d class=%d",
-         gOriginalInstanceRaise != NULL, gOriginalClassRaise != NULL);
+
+    void *(*hookFunction)(void *, void *, void **) =
+        (void *(*)(void *, void *, void **))dlsym(RTLD_DEFAULT, "MSHookFunction");
+    if (hookFunction) {
+        void *original = NULL;
+        hookFunction((void *)objc_exception_throw, (void *)DashSplitExceptionThrowHook, &original);
+        gOriginalObjcExceptionThrow = (void (*)(id))original;
+    }
+
+    CLog(@"filter: raise hooks instance=%d class=%d, objc_exception_throw hooked=%d",
+         gOriginalInstanceRaise != NULL, gOriginalClassRaise != NULL,
+         gOriginalObjcExceptionThrow != NULL);
 }
 
 #pragma mark - Hosting sequence
@@ -1144,9 +1185,16 @@ static void CreateInterface(BOOL testMode)
     } else {
         NSString *bid1 = HostBundleID1();
         NSString *bid2 = HostBundleID2();
-        CLog(@"ui: hosting %@ + %@ in car mode", bid1, bid2);
-        gSlots[0] = HostApplication(bid1, gPanes[0], 0);
-        gSlots[1] = HostApplication(bid2, gPanes[1], 1);
+        if (bid1.length > 0 && [bid1 isEqualToString:bid2]) {
+            // One app cannot drive two scenes at once — the shared
+            // sceneID means the second host would fight the first.
+            CLog(@"ui: both panes set to %@, hosting left pane only", bid1);
+            gSlots[0] = HostApplication(bid1, gPanes[0], 0);
+        } else {
+            CLog(@"ui: hosting %@ + %@ in car mode", bid1, bid2);
+            gSlots[0] = HostApplication(bid1, gPanes[0], 0);
+            gSlots[1] = HostApplication(bid2, gPanes[1], 1);
+        }
     }
 }
 
@@ -1269,7 +1317,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.0 loaded ---");
+        CLog(@"--- DashSplit 0.1.1 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

@@ -83,32 +83,34 @@ type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@<手机IP> "mkdir -p /var/r
 
 ## 配置
 
-配置文件：`/var/mobile/Library/Preferences/lilliana.dashsplit.plist`
+**推荐：系统设置 → 车载分屏**。里面可以选左半屏 / 右半屏各显示哪个 App（列表含全部已安装 App，系统自带也算），以及总开关。改完**重新连接一次 CarPlay** 生效。
+
+同一个 App 不能同时投两块半屏（系统的 scene 机制限制）；左右选了同一个 App 时只有左屏会投。
+
+配置文件（设置面板写的就是它）：`/var/mobile/Library/Preferences/lilliana.dashsplit.plist`
 
 ```xml
 <dict>
     <key>Enabled</key>
     <true/>
-    <key>SplitRatio</key>
-    <real>0.5</real>
     <key>HostBundleID</key>
-    <string>com.sdu.didi.gsui</string>
+    <string>com.xiaojukeji.didi</string>
+    <key>HostBundleID2</key>
+    <string>com.autonavi.amap</string>
 </dict>
 ```
 
-改完 `killall -9 SpringBoard` 生效。
-
 - `Enabled`：总开关，默认开
-- `SplitRatio`：左半屏占比，0.25–0.75
-- `HostBundleID`：要挂到左半屏的 App，留空就只显示探针色块
+- `HostBundleID`：左半屏 App（默认滴滴）
+- `HostBundleID2`：右半屏 App（默认高德）
 
-   也可以不用 plist，直接建一个纯文本文件，内容只写包名：
+   左半屏也可以不用 plist，直接建一个纯文本文件，内容只写包名（优先级低于 plist）：
 
    ```
    /var/mobile/Library/Preferences/lilliana.dashsplit.host
    ```
 
-`HostBundleID` 不知道的话，用 Filza 找到那个 App 的 `.app` 目录，看里面 `Info.plist` 的 `CFBundleIdentifier`；或者在 SSH 里：
+`Bundle ID` 不知道的话，用 Filza 找到那个 App 的 `.app` 目录，看里面 `Info.plist` 的 `CFBundleIdentifier`；或者在 SSH 里：
 
 ```sh
 for p in /var/containers/Bundle/Application/*/*.app; do
