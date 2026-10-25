@@ -100,7 +100,7 @@ final class DashSplitPrefListController: PSListController {
         let picker = PSSpecifier.preferenceSpecifierNamed(
             title,
             target: self,
-            set: #selector(setAppValue(_:specifier:)),
+            set: #selector(setAppValue(_:forSpecifier:)),
             get: #selector(getAppValue(_:)),
             detail: PSListItemsController.self,
             cell: .linkListCell,
@@ -133,10 +133,10 @@ final class DashSplitPrefListController: PSListController {
                 GroupCell(
                     name: "分屏应用",
                     footerText: "更改后重新连接 CarPlay 生效;两个半屏选择同一个 App 时,只会投屏左半屏。"
-                ),
-                appPicker("左半屏应用", key: keyLeft, defaultID: defaultLeft),
-                appPicker("右半屏应用", key: keyRight, defaultID: defaultRight)
+                )
             ], to: &specifiers, in: self)
+            specifiers.add(appPicker("左半屏应用", key: keyLeft, defaultID: defaultLeft))
+            specifiers.add(appPicker("右半屏应用", key: keyRight, defaultID: defaultRight))
 
             setValue(specifiers, forKey: "_specifiers")
             return specifiers
