@@ -225,6 +225,14 @@ final class DashSplitPrefListController: PSListController {
                 specifiers.add(right)
             }
 
+            SpecifierFactory.add([
+                GroupCell(
+                    name: "测试",
+                    footerText: "不连 CarPlay,直接在手机屏幕上分屏预览:上 60% 为左屏应用,下 40% 为右屏应用。开启后几秒内出现,关闭后几秒内消失。"
+                ),
+                ToggleCell(name: "手机测试模式", key: "TestOnMainScreen", defaultValue: false)
+            ], to: &specifiers, in: self)
+
             setValue(specifiers, forKey: "_specifiers")
             return specifiers
         }

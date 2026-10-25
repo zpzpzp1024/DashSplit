@@ -1,5 +1,9 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.9: phone test mode hosts BOTH panes on the phone screen (top 60% =
+// left app, bottom 40% = right app, same ratio as the car split) and gets a
+// 手机测试模式 toggle in the Settings pane (TestOnMainScreen).
+//
 // 0.1.7: the pane is Swift + JinxPrefs (a carbon copy of Reverie's pane
 // build). The 0.1.5/0.1.6 ObjC rows never rendered: they passed a cell
 // CLASS to a constructor whose cell: parameter is a PSCellType enum —
@@ -1110,8 +1114,12 @@ static void Layout(void)
     CGRect bounds = gWindow.bounds;
     
     if (gTestMode) {
-        if (gPanes[0]) gPanes[0].frame = bounds;
-        gDivider.frame = CGRectMake(bounds.size.width - 2, 0, 2, bounds.size.height);
+        // Phone test mode: portrait screen, top 60% = left-pane app,
+        // bottom 40% = right-pane app (same ratio as the car split).
+        CGFloat topHeight = floor(bounds.size.height * kSplitRatio);
+        if (gPanes[0]) gPanes[0].frame = CGRectMake(0, 0, bounds.size.width, topHeight);
+        if (gPanes[1]) gPanes[1].frame = CGRectMake(0, topHeight, bounds.size.width, bounds.size.height - topHeight);
+        gDivider.frame = CGRectMake(0, topHeight - 1, bounds.size.width, 2);
     } else {
         CGFloat sideMargin = floor(bounds.size.width / 13.0);
         CGFloat usable = bounds.size.width - sideMargin;
@@ -1139,8 +1147,9 @@ static void Layout(void)
 
 static UIWindow *MakeTestWindow(void)
 {
-    CGRect screen = [UIScreen mainScreen].bounds;
-    CGRect frame = CGRectMake(0, 0, floor(screen.size.width * 0.5), screen.size.height);
+    // Full phone screen: the test overlay splits it top(60%)/bottom(40%),
+    // mirroring the car's left/right ratio so both panes are testable.
+    CGRect frame = [UIScreen mainScreen].bounds;
     
     UIWindow *window = nil;
     for (UIScene *scene in [[UIApplication sharedApplication] connectedScenes]) {
@@ -1241,23 +1250,18 @@ static void CreateInterface(BOOL testMode)
         [manager removeItemAtPath:@COCKPIT_CRASHED error:nil];
     }
     
-    if (testMode) {
-        NSString *bundleID = HostBundleID1();
-        CLog(@"ui: hosting %@ in test mode", bundleID);
-        gSlots[0] = HostApplication(bundleID, gPanes[0], 0);
+    NSString *bid1 = HostBundleID1();
+    NSString *bid2 = HostBundleID2();
+    CLog(@"ui: hosting %@ + %@ in %@", bid1, bid2, testMode ? @"phone test mode" : @"car mode");
+
+    if (bid1.length > 0 && [bid1 isEqualToString:bid2]) {
+        // One app cannot drive two scenes at once — the shared
+        // sceneID means the second host would fight the first.
+        CLog(@"ui: both panes set to %@, hosting left pane only", bid1);
+        gSlots[0] = HostApplication(bid1, gPanes[0], 0);
     } else {
-        NSString *bid1 = HostBundleID1();
-        NSString *bid2 = HostBundleID2();
-        if (bid1.length > 0 && [bid1 isEqualToString:bid2]) {
-            // One app cannot drive two scenes at once — the shared
-            // sceneID means the second host would fight the first.
-            CLog(@"ui: both panes set to %@, hosting left pane only", bid1);
-            gSlots[0] = HostApplication(bid1, gPanes[0], 0);
-        } else {
-            CLog(@"ui: hosting %@ + %@ in car mode", bid1, bid2);
-            gSlots[0] = HostApplication(bid1, gPanes[0], 0);
-            gSlots[1] = HostApplication(bid2, gPanes[1], 1);
-        }
+        gSlots[0] = HostApplication(bid1, gPanes[0], 0);
+        gSlots[1] = HostApplication(bid2, gPanes[1], 1);
     }
 }
 
@@ -1380,7 +1384,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.8 loaded ---");
+        CLog(@"--- DashSplit 0.1.9 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
