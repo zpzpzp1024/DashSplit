@@ -65,7 +65,8 @@ static NSArray *InstalledApps(void)
         @try { bundleID = [proxy valueForKey:@"bundleIdentifier"]; } @catch (__unused NSException *ignored) { }
         if (![name isKindOfClass:[NSString class]] || name.length == 0) continue;
         if (![bundleID isKindOfClass:[NSString class]] || bundleID.length == 0) continue;
-        if (![seen addObject:bundleID]) continue;
+        if ([seen containsObject:bundleID]) continue;
+        [seen addObject:bundleID];
 
         // applicationType: NSString ("System"/"User"/…) on old iOS,
         // NSNumber enum (0=User, 1=System, 2=Internal…) on new.
@@ -116,13 +117,12 @@ static NSArray *InstalledApps(void)
     }
 
     PSSpecifier *specifier = [PSSpecifier preferenceSpecifierNamed:title
-                                                             target:self
-                                                             action:NULL
-                                                                set:@selector(setAppValue:forSpecifier:)
-                                                                get:@selector(getAppValue:)
-                                                             detail:[PSListItemsController class]
-                                                               cell:NSClassFromString(@"PSLinkListCell")
-                                                               edit:NULL];
+                                                            target:self
+                                                               set:@selector(setAppValue:forSpecifier:)
+                                                               get:@selector(getAppValue:)
+                                                            detail:[PSListItemsController class]
+                                                              cell:NSClassFromString(@"PSLinkListCell")
+                                                              edit:NULL];
     [specifier setProperty:names forKey:@"titles"];
     [specifier setProperty:ids forKey:@"values"];
     [specifier setProperty:key forKey:@"prefsKey"];
@@ -137,12 +137,11 @@ static NSArray *InstalledApps(void)
 
         PSSpecifier *toggle = [PSSpecifier preferenceSpecifierNamed:@"启用分屏"
                                                               target:self
-                                                              action:NULL
-                                                                set:@selector(setEnabledValue:forSpecifier:)
-                                                                get:@selector(getEnabledValue:)
-                                                             detail:nil
-                                                               cell:NSClassFromString(@"PSSwitchCell")
-                                                               edit:NULL];
+                                                                 set:@selector(setEnabledValue:forSpecifier:)
+                                                                 get:@selector(getEnabledValue:)
+                                                              detail:nil
+                                                                cell:NSClassFromString(@"PSSwitchCell")
+                                                                edit:NULL];
         [specs addObject:toggle];
 
         [specs addObject:[self appPickerNamed:@"左半屏应用" key:kKeyLeft defaultID:kDefaultLeft]];
@@ -150,12 +149,11 @@ static NSArray *InstalledApps(void)
 
         PSSpecifier *note = [PSSpecifier preferenceSpecifierNamed:@"更改后重新连接 CarPlay 生效；左右选同一应用时只投左屏"
                                                             target:self
-                                                            action:NULL
-                                                                set:NULL
-                                                                get:NULL
-                                                             detail:nil
-                                                               cell:NSClassFromString(@"PSTitleValueCell")
-                                                               edit:NULL];
+                                                               set:NULL
+                                                               get:NULL
+                                                            detail:nil
+                                                              cell:NSClassFromString(@"PSTitleValueCell")
+                                                              edit:NULL];
         [specs addObject:note];
 
         _specifiers = specs;
