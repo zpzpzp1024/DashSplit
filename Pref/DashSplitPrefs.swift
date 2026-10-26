@@ -190,21 +190,21 @@ class AppPickerController: PSListController {
 @objc(DashSplitLeftAppPicker)
 final class DashSplitLeftAppPicker: AppPickerController {
     override var paneKey: String { keyLeft }
-    override var paneTitle: String { "左半屏应用" }
+    override var paneTitle: String { "第1屏应用" }
     override var fallbackID: String { defaultLeft }
 }
 
 @objc(DashSplitRightAppPicker)
 final class DashSplitRightAppPicker: AppPickerController {
     override var paneKey: String { keyRight }
-    override var paneTitle: String { "右半屏应用" }
+    override var paneTitle: String { "第2屏应用" }
     override var fallbackID: String { defaultRight }
 }
 
 @objc(DashSplitThirdAppPicker)
 final class DashSplitThirdAppPicker: AppPickerController {
     override var paneKey: String { keyThird }
-    override var paneTitle: String { "第三屏应用" }
+    override var paneTitle: String { "第3屏应用" }
     override var fallbackID: String { defaultThird }
 }
 
@@ -352,15 +352,15 @@ final class DashSplitPrefListController: PSListController {
                     footerText: "点进去选择 App;更改后重新连接 CarPlay 生效;同一个 App 只投第一个出现的区域。"
                 )
             ], to: &specifiers, in: self)
-            if let left = paneRow("左半屏应用", current: currentSelection(keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
+            if let left = paneRow("第1屏应用", current: currentSelection(keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
                 specifiers.add(left)
             }
-            if let right = paneRow("右半屏应用", current: currentSelection(keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
+            if let right = paneRow("第2屏应用", current: currentSelection(keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
                 specifiers.add(right)
             }
             // Only show the third pane picker in 3-split mode.
             if currentSplitMode() == 3 {
-                if let third = paneRow("第三屏应用", current: currentSelection(keyThird, defaultThird), detail: DashSplitThirdAppPicker.self) {
+                if let third = paneRow("第3屏应用", current: currentSelection(keyThird, defaultThird), detail: DashSplitThirdAppPicker.self) {
                     specifiers.add(third)
                 }
             }

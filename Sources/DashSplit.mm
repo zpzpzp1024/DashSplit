@@ -1151,8 +1151,9 @@ static void TeardownSlot(HostSlot *slot)
 
 static void TeardownAllHosts(void)
 {
-    int count = PaneCount();
-    for (int i = 0; i < count; i++) {
+    // Teardown ALL slots (not just PaneCount()) — when switching from 3-split
+    // to 2-split, slot[2] must be torn down even though PaneCount() is now 2.
+    for (int i = 0; i < 3; i++) {
         if (gSlots[i]) {
             TeardownSlot(gSlots[i]);
             gSlots[i] = nil;
@@ -1168,6 +1169,7 @@ static UIView *gPanes[3];
 static UIView *gDivider;
 static BOOL gTestMode;
 static UIButton *gToggleButton;
+static int gCurrentPaneCount = 0;  // pane count of the currently active interface
 
 // The toggle glyph must be set on BOTH normal and highlighted states —
 // otherwise the press shows the stale title from the other state.
@@ -1364,15 +1366,15 @@ static void CreateInterface(BOOL testMode)
     if (!window) return;
     
     gTestMode = testMode;
+    int count = PaneCount();
+    gCurrentPaneCount = count;
     window.windowLevel = 9000000;
     window.backgroundColor = [UIColor clearColor];
     window.hidden = NO;
     
-    int count = PaneCount();
-    
     // Create panes with blue translucent background.
     UIColor *paneColor = [UIColor colorWithRed:0.05 green:0.20 blue:0.55 alpha:0.55];
-    NSArray *paneTitles = @[@"DashSplit 探针\n左屏", @"DashSplit 探针\n右屏", @"DashSplit 探针\n中屏"];
+    NSArray *paneTitles = @[@"DashSplit 探针\n第1屏", @"DashSplit 探针\n第2屏", @"DashSplit 探针\n第3屏"];
     for (int index = 0; index < count; index++) {
         NSString *title = index < paneTitles.count ? paneTitles[index] : [NSString stringWithFormat:@"DashSplit 探针\n屏%d", index];
         gPanes[index] = MakePane(title, paneColor);
@@ -1561,8 +1563,21 @@ static void Tick(void)
                 for (int i = 0; i < count; i++) gPanes[i] = nil;
                 gDivider = nil;
                 gToggleButton = nil;
+                gCurrentPaneCount = 0;
                 gTestMode = NO;
                 CLog(@"lifecycle: car display found, rebuilding there");
+            } else if (gCurrentPaneCount != PaneCount()) {
+                // Split mode changed (2<->3): tear down everything and rebuild
+                // so the new pane count and layout take effect.
+                CLog(@"lifecycle: split mode changed %d->%d, rebuilding", gCurrentPaneCount, PaneCount());
+                TeardownAllHosts();
+                gWindow.hidden = YES;
+                gWindow = nil;
+                for (int i = 0; i < 3; i++) gPanes[i] = nil;
+                gDivider = nil;
+                gToggleButton = nil;
+                gCurrentPaneCount = 0;
+                // Fall through to CreateInterface below.
             } else {
                 if (gWindow.hidden && !gUserClosed) {
                     gWindow.hidden = NO;
@@ -1595,7 +1610,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.17 loaded ---");
+        CLog(@"--- DashSplit 0.1.18 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
