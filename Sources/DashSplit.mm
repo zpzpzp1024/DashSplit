@@ -1166,7 +1166,7 @@ static void TeardownAllHosts(void)
 
 static UIWindow *gWindow;
 static UIView *gPanes[3];
-static UIView *gDivider;
+static UIView *gDividers[2];  // up to 2 dividers for 3-pane split
 static BOOL gTestMode;
 static UIButton *gToggleButton;
 static int gCurrentPaneCount = 0;  // pane count of the currently active interface
@@ -1225,7 +1225,7 @@ static void RestoreSlot(int index)
         for (int index = 0; index < count; index++) {
             if (gPanes[index]) gPanes[index].hidden = YES;
         }
-        if (gDivider) gDivider.hidden = YES;
+        for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
         SetToggleGlyph(@"⟳");
         for (int index = 0; index < count; index++) {
             SlotSetMode(index, 0);
@@ -1236,7 +1236,7 @@ static void RestoreSlot(int index)
         for (int index = 0; index < count; index++) {
             if (gPanes[index]) gPanes[index].hidden = NO;
         }
-        if (gDivider) gDivider.hidden = NO;
+        for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
         SetToggleGlyph(@"✕");
         for (int index = 0; index < count; index++) {
             RestoreSlot(index);
@@ -1265,12 +1265,11 @@ static void Layout(void)
                                                  bounds.size.width, paneHeight);
             }
         }
-        // Divider lines between panes.
-        if (gDivider) {
-            // Single divider view: place it at the first boundary.
-            // For multiple panes we'd need multiple dividers, but one is enough
-            // as a visual hint; the panes' clipsToBounds handles the rest.
-            gDivider.frame = CGRectMake(0, paneHeight - 1, bounds.size.width, 2);
+        // Divider lines between each pair of adjacent panes.
+        for (int i = 0; i < count - 1 && i < 2; i++) {
+            if (gDividers[i]) {
+                gDividers[i].frame = CGRectMake(0, paneHeight * (i + 1) - 1, bounds.size.width, 2);
+            }
         }
     } else {
         // Car mode: leave the leftmost strip for the system sidebar, then
@@ -1285,8 +1284,10 @@ static void Layout(void)
                                                   paneWidth, bounds.size.height);
             }
         }
-        if (gDivider) {
-            gDivider.frame = CGRectMake(sideMargin + paneWidth, 0, 2, bounds.size.height);
+        for (int i = 0; i < count - 1 && i < 2; i++) {
+            if (gDividers[i]) {
+                gDividers[i].frame = CGRectMake(sideMargin + paneWidth * (i + 1), 0, 2, bounds.size.height);
+            }
         }
     }
     
@@ -1381,10 +1382,13 @@ static void CreateInterface(BOOL testMode)
         [window addSubview:gPanes[index]];
     }
     
-    gDivider = [[UIView alloc] initWithFrame:CGRectZero];
-    gDivider.backgroundColor = [UIColor whiteColor];
-    gDivider.userInteractionEnabled = NO;
-    [window addSubview:gDivider];
+    // Create divider lines (one per gap between adjacent panes).
+    for (int i = 0; i < count - 1 && i < 2; i++) {
+        gDividers[i] = [[UIView alloc] initWithFrame:CGRectZero];
+        gDividers[i].backgroundColor = [UIColor whiteColor];
+        gDividers[i].userInteractionEnabled = NO;
+        [window addSubview:gDividers[i]];
+    }
     
     // Toggle button — always visible, lets user hide/show the panes.
     // Custom type with identical colors for every state: the button must look
@@ -1561,7 +1565,7 @@ static void Tick(void)
                 gWindow = nil;
                 int count = PaneCount();
                 for (int i = 0; i < count; i++) gPanes[i] = nil;
-                gDivider = nil;
+                for (int i = 0; i < 2; i++) gDividers[i] = nil;
                 gToggleButton = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
@@ -1574,7 +1578,7 @@ static void Tick(void)
                 gWindow.hidden = YES;
                 gWindow = nil;
                 for (int i = 0; i < 3; i++) gPanes[i] = nil;
-                gDivider = nil;
+                for (int i = 0; i < 2; i++) gDividers[i] = nil;
                 gToggleButton = nil;
                 gCurrentPaneCount = 0;
                 // Fall through to CreateInterface below.
@@ -1610,7 +1614,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.18 loaded ---");
+        CLog(@"--- DashSplit 0.1.19 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
