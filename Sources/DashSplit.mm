@@ -578,7 +578,14 @@ static IMP gOriginalClassRaise;
 
 static void DashSplitResyncAfterSwallow(NSString *reason)
 {
+    // Resync ALL matching slots, not just the first one: the assertion's
+    // reason string includes the full view hierarchy, which may contain
+    // multiple hosted bundleIDs. In 3-split mode, standing down only the
+    // first match left the others in Live mode and the next assertion
+    // abort SpringBoard (0.1.18 crash: compass assertion, but only
+    // calculator was resynced).
     int count = PaneCount();
+    BOOL any = NO;
     for (int index = 0; index < count; index++) {
         HostSlot *slot = gSlots[index];
         if (!slot || !slot.viewController) continue;
@@ -588,16 +595,18 @@ static void DashSplitResyncAfterSwallow(NSString *reason)
         dispatch_async(dispatch_get_main_queue(), ^{
             SlotSetMode(idx, 0);
         });
-        return;
+        any = YES;
     }
-    // Reason did not name one of our scenes, but we are hosting — stand all
-    // slots down anyway so the controllers cannot be the stale side.
-    int count2 = PaneCount();
-    dispatch_async(dispatch_get_main_queue(), ^{
-        for (int index = 0; index < count2; index++) {
-            if (gSlots[index] && gSlots[index].viewController) SlotSetMode(index, 0);
-        }
-    });
+    if (!any) {
+        // Reason did not name one of our scenes, but we are hosting — stand all
+        // slots down anyway so the controllers cannot be the stale side.
+        int count2 = PaneCount();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            for (int index = 0; index < count2; index++) {
+                if (gSlots[index] && gSlots[index].viewController) SlotSetMode(index, 0);
+            }
+        });
+    }
 }
 
 static BOOL DashSplitShouldSwallow(NSString *name, NSString *reason)
@@ -779,13 +788,19 @@ static void DashSplitSceneDidUpdate(id self, SEL _cmd, id scene, id diff, id old
 {
     @try {
         if (DiffSetsForegroundNo(diff)) {
-            NSString *sceneText = SceneMatchText(scene);
+            // Stand down ALL slots, not just the matching one: in 3-split mode,
+            // a foreground=No diff for one scene can cascade to others (the
+            // system may deliver multiple diffs in sequence, and a slot left
+            // in Live mode trips the assertion on the NEXT diff). Standing
+            // down everyone is safe — HealthCheckSlots will revive them when
+            // the system reports them active again.
             int count = PaneCount();
+            NSString *sceneText = SceneMatchText(scene);
             for (int index = 0; index < count; index++) {
                 HostSlot *slot = gSlots[index];
                 if (!slot || !slot.viewController) continue;
-                if (![sceneText containsString:slot.bundleID]) continue;
-                CLog(@"preempt[%d]: foreground=No diff for %@, standing down before delivery", index, slot.bundleID);
+                if (slot.suppressed) continue;  // already stood down
+                CLog(@"preempt[%d]: foreground=No diff for %@, standing down (scene=%@)", index, slot.bundleID, sceneText);
                 slot.suppressed = 1;
                 SlotSetMode(index, 0);
             }
@@ -1614,7 +1629,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.19 loaded ---");
+        CLog(@"--- DashSplit 0.1.20 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
