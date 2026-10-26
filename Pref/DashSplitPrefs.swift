@@ -14,6 +14,7 @@ private let prefsFile = "/var/mobile/Library/Preferences/lilliana.dashsplit.plis
 private let keyEnabled = "Enabled"
 private let keyLeft = "HostBundleID"
 private let keyRight = "HostBundleID2"
+private let keyStretchFill = "StretchFill"
 // Uninstallable system apps: the defaults must exist on every device.
 private let defaultLeft = "com.apple.mobiletimer"   // 时钟
 private let defaultRight = "com.apple.mobilecal"     // 日历
@@ -246,6 +247,14 @@ final class DashSplitPrefListController: PSListController {
             if let right = paneRow("右半屏应用", current: currentSelection(keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
                 specifiers.add(right)
             }
+
+            SpecifierFactory.add([
+                GroupCell(
+                    name: "显示",
+                    footerText: "开启后 App 画面会拉伸填满整个分屏区域(不保持原始宽高比);关闭则等比缩小居中显示,两侧可能留有空白。更改后重新连接 CarPlay 生效。"
+                ),
+                ToggleCell(name: "拉伸填满", key: keyStretchFill, defaultValue: false)
+            ], to: &specifiers, in: self)
 
             SpecifierFactory.add([
                 GroupCell(

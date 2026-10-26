@@ -77,6 +77,7 @@ static NSString *const kPrefsHostApp  = @"HostBundleID";
 static NSString *const kPrefsHostApp2 = @"HostBundleID2";
 static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
+static NSString *const kPrefsStretchFill = @"StretchFill";
 
 // Uninstallable system apps: the defaults must exist on every device.
 static NSString *const kDefaultHost1 = @"com.apple.mobiletimer";   // 时钟
@@ -226,6 +227,13 @@ static BOOL FileExists(NSString *path)
 static BOOL TestModeEnabled(void)
 {
     return PrefBool(kPrefsTestMain, NO);
+}
+
+// When ON, the app content is stretched (non-uniform scale) to fill the pane
+// completely; when OFF (default), it is aspect-fit (uniform scale, centered).
+static BOOL StretchFillEnabled(void)
+{
+    return PrefBool(kPrefsStretchFill, NO);
 }
 
 static NSString *HostBundleID1(void)
@@ -868,13 +876,30 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         return;
     }
     
-    CGFloat scale = MIN(container.bounds.size.width / MAX(phone.width, 1),
-                        container.bounds.size.height / MAX(phone.height, 1));
-    contentView.transform = CGAffineTransformMakeScale(scale, scale);
-    contentView.center = CGPointMake(container.bounds.size.width / 2.0,
-                                     container.bounds.size.height / 2.0);
-    CLog(@"fit: scaled %.3f pane=%@ phone=%@",
-         scale, NSStringFromCGSize(container.bounds.size), NSStringFromCGSize(phone));
+    BOOL stretch = StretchFillEnabled();
+    
+    if (stretch) {
+        // Non-uniform stretch: scale X and Y independently so the app content
+        // fills the entire pane with no letterboxing. The full app UI remains
+        // visible (nothing is clipped), but the aspect ratio changes.
+        CGFloat scaleX = container.bounds.size.width / MAX(phone.width, 1);
+        CGFloat scaleY = container.bounds.size.height / MAX(phone.height, 1);
+        contentView.transform = CGAffineTransformMakeScale(scaleX, scaleY);
+        contentView.center = CGPointMake(container.bounds.size.width / 2.0,
+                                         container.bounds.size.height / 2.0);
+        CLog(@"fit: stretch scaleX=%.3f scaleY=%.3f pane=%@ phone=%@",
+             scaleX, scaleY, NSStringFromCGSize(container.bounds.size), NSStringFromCGSize(phone));
+    } else {
+        // Aspect-fit: uniform scale so the full app UI fits inside the pane,
+        // centered with letterboxing on the axis that doesn't fill.
+        CGFloat scale = MIN(container.bounds.size.width / MAX(phone.width, 1),
+                            container.bounds.size.height / MAX(phone.height, 1));
+        contentView.transform = CGAffineTransformMakeScale(scale, scale);
+        contentView.center = CGPointMake(container.bounds.size.width / 2.0,
+                                         container.bounds.size.height / 2.0);
+        CLog(@"fit: scaled %.3f pane=%@ phone=%@",
+             scale, NSStringFromCGSize(container.bounds.size), NSStringFromCGSize(phone));
+    }
 }
 
 static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
