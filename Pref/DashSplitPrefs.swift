@@ -277,8 +277,52 @@ class SplitModePickerController: PSListController {
 @objc(DashSplitSplitModePicker)
 final class DashSplitSplitModePicker: SplitModePickerController {}
 
+// Respring target: the "应用设置" button asks for confirmation, then
+// kills SpringBoard so all preference changes take effect immediately.
+private final class RespringTarget: NSObject {
+    weak var controller: PSListController?
+
+    init(controller: PSListController?) {
+        self.controller = controller
+    }
+
+    @objc func respringTapped() {
+        guard let vc = controller else { return }
+        let alert = UIAlertController(
+            title: "应用设置",
+            message: "确定要重启 SpringBoard 吗?\n重启后所有更改将立即生效。",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "重启", style: .destructive, handler: { _ in
+            NSLog("[DashSplitPref] respring triggered by user")
+            // killall -9 SpringBoard via posix_spawn — the tweak reloads on the next boot.
+            // On rootless jailbreaks the binary lives at /var/jb/usr/bin/killall.
+            var argv: [UnsafeMutablePointer<CChar>?] = [
+                strdup("killall"),
+                strdup("-9"),
+                strdup("SpringBoard"),
+                nil
+            ]
+            defer { argv.forEach { free($0) } }
+            var pid: pid_t = 0
+            let paths = ["/var/jb/usr/bin/killall", "/usr/bin/killall"]
+            for path in paths {
+                if posix_spawn(&pid, path, nil, nil, argv, nil) == 0 {
+                    NSLog("[DashSplitPref] respring spawned pid %d via %s", pid, path)
+                    break
+                }
+            }
+        }))
+        vc.present(alert, animated: true)
+    }
+}
+
 @objc(DashSplitPrefListController)
 final class DashSplitPrefListController: PSListController {
+    // Kept alive so the button's target is not deallocated.
+    private var respringTarget: RespringTarget?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         Metadata.package = "lilliana.dashsplit"
@@ -380,6 +424,27 @@ final class DashSplitPrefListController: PSListController {
                 ),
                 ToggleCell(name: "手机测试模式", key: "TestOnMainScreen", defaultValue: false)
             ], to: &specifiers, in: self)
+
+            // Respring button — applies all changes immediately.
+            respringTarget = RespringTarget(controller: self)
+            SpecifierFactory.add([
+                GroupCell(
+                    name: "应用",
+                    footerText: "更改以上设置后,点击下方按钮重启 SpringBoard 以立即生效。"
+                )
+            ], to: &specifiers, in: self)
+            if let btn = PSSpecifier.preferenceSpecifierNamed(
+                "应用设置",
+                target: respringTarget!,
+                set: nil,
+                get: nil,
+                detail: nil,
+                cell: .buttonCell,
+                edit: nil
+            ) {
+                btn.buttonAction = #selector(RespringTarget.respringTapped)
+                specifiers.add(btn)
+            }
 
             setValue(specifiers, forKey: "_specifiers")
             return specifiers
