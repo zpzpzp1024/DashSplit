@@ -75,14 +75,16 @@
 
 static NSString *const kPrefsHostApp  = @"HostBundleID";
 static NSString *const kPrefsHostApp2 = @"HostBundleID2";
+static NSString *const kPrefsHostApp3 = @"HostBundleID3";
 static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
 static NSString *const kPrefsStretchFill = @"StretchFill";
+static NSString *const kPrefsSplitMode = @"SplitMode";
 
 // Uninstallable system apps: the defaults must exist on every device.
 static NSString *const kDefaultHost1 = @"com.apple.mobiletimer";   // 时钟
 static NSString *const kDefaultHost2 = @"com.apple.mobilecal";     // 日历
-static CGFloat const kSplitRatio = 0.6;
+static NSString *const kDefaultHost3 = @"com.apple.calculator";    // 计算器
 
 #pragma mark - Logging
 
@@ -213,6 +215,12 @@ static NSString *PrefString(NSString *key)
     return [value isKindOfClass:[NSString class]] ? value : nil;
 }
 
+static NSInteger PrefInteger(NSString *key, NSInteger fallback)
+{
+    id value = Pref(key);
+    return [value isKindOfClass:[NSNumber class]] ? [value integerValue] : fallback;
+}
+
 #define COCKPIT_TEST "/var/mobile/Library/Preferences/lilliana.dashsplit.test"
 #define COCKPIT_HOST "/var/mobile/Library/Preferences/lilliana.dashsplit.host"
 
@@ -236,6 +244,18 @@ static BOOL StretchFillEnabled(void)
     return PrefBool(kPrefsStretchFill, NO);
 }
 
+// Split mode: 2 = two-way split (default), 3 = three-way split.
+static int SplitMode(void)
+{
+    int mode = (int)PrefInteger(kPrefsSplitMode, 2);
+    return (mode == 3) ? 3 : 2;
+}
+
+static int PaneCount(void)
+{
+    return SplitMode();
+}
+
 static NSString *HostBundleID1(void)
 {
     NSString *bundleID = PrefString(kPrefsHostApp);
@@ -255,6 +275,13 @@ static NSString *HostBundleID2(void)
     return kDefaultHost2;
 }
 
+static NSString *HostBundleID3(void)
+{
+    NSString *bundleID = PrefString(kPrefsHostApp3);
+    if (bundleID.length) return bundleID;
+    return kDefaultHost3;
+}
+
 static void LogPrefsState(void)
 {
     NSFileManager *manager = [NSFileManager defaultManager];
@@ -269,13 +296,15 @@ static void LogPrefsState(void)
          prefs != nil,
          (unsigned long)prefs.count);
     
-    CLog(@"prefs: testMarker=%d hostFile=%d enabled=%d testMode=%d host1=%@ host2=%@",
+    CLog(@"prefs: testMarker=%d hostFile=%d enabled=%d testMode=%d splitMode=%d host1=%@ host2=%@ host3=%@",
          FileExists(@COCKPIT_TEST),
          FileExists(@COCKPIT_HOST),
          PrefBool(kPrefsEnabled, YES),
          TestModeEnabled(),
+         SplitMode(),
          HostBundleID1(),
-         HostBundleID2());
+         HostBundleID2(),
+         HostBundleID3());
 }
 
 #pragma mark - Runtime helpers
@@ -503,7 +532,7 @@ static void DumpProbe(void)
 @implementation HostSlot
 @end
 
-static HostSlot *gSlots[2];
+static HostSlot *gSlots[3];
 static BOOL gUserClosed = NO;
 
 static BOOL SetCurrentMode(id viewController, NSInteger mode)
@@ -549,20 +578,23 @@ static IMP gOriginalClassRaise;
 
 static void DashSplitResyncAfterSwallow(NSString *reason)
 {
-    for (int index = 0; index < 2; index++) {
+    int count = PaneCount();
+    for (int index = 0; index < count; index++) {
         HostSlot *slot = gSlots[index];
         if (!slot || !slot.viewController) continue;
         if (![reason containsString:slot.bundleID]) continue;
         CLog(@"assert: resyncing mode[%d] %@ to 0", index, slot.bundleID);
+        int idx = index;  // capture for block
         dispatch_async(dispatch_get_main_queue(), ^{
-            SlotSetMode(index, 0);
+            SlotSetMode(idx, 0);
         });
         return;
     }
     // Reason did not name one of our scenes, but we are hosting — stand all
     // slots down anyway so the controllers cannot be the stale side.
+    int count2 = PaneCount();
     dispatch_async(dispatch_get_main_queue(), ^{
-        for (int index = 0; index < 2; index++) {
+        for (int index = 0; index < count2; index++) {
             if (gSlots[index] && gSlots[index].viewController) SlotSetMode(index, 0);
         }
     });
@@ -572,7 +604,7 @@ static BOOL DashSplitShouldSwallow(NSString *name, NSString *reason)
 {
     if (!name || ![name isEqualToString:@"NSInternalInconsistencyException"]) return NO;
     if (![reason containsString:@"foreground status out from underneath us"]) return NO;
-    return (gSlots[0] != nil || gSlots[1] != nil);
+    return (gSlots[0] != nil || gSlots[1] != nil || gSlots[2] != nil);
 }
 
 static void DashSplitRaiseInstance(id self, SEL _cmd)
@@ -748,7 +780,8 @@ static void DashSplitSceneDidUpdate(id self, SEL _cmd, id scene, id diff, id old
     @try {
         if (DiffSetsForegroundNo(diff)) {
             NSString *sceneText = SceneMatchText(scene);
-            for (int index = 0; index < 2; index++) {
+            int count = PaneCount();
+            for (int index = 0; index < count; index++) {
                 HostSlot *slot = gSlots[index];
                 if (!slot || !slot.viewController) continue;
                 if (![sceneText containsString:slot.bundleID]) continue;
@@ -952,7 +985,7 @@ static void ApplyModeWhenReady(int index, int attempt)
     if (!slot || !slot.viewController) return;
     if (gUserClosed) return;
     
-    char tag = index == 0 ? 'L' : 'R';
+    char tag = index == 0 ? 'L' : (index == 1 ? 'R' : 'M');
     id scene = slot.handle ? Call0(slot.handle, @"sceneIfExists") : nil;
     BOOL active = BoolReturn(scene, @"isActive", NO);
     CLog(@"mode[%c]: poll attempt=%d scene=%@ active=%d",
@@ -1118,7 +1151,8 @@ static void TeardownSlot(HostSlot *slot)
 
 static void TeardownAllHosts(void)
 {
-    for (int i = 0; i < 2; i++) {
+    int count = PaneCount();
+    for (int i = 0; i < count; i++) {
         if (gSlots[i]) {
             TeardownSlot(gSlots[i]);
             gSlots[i] = nil;
@@ -1130,7 +1164,7 @@ static void TeardownAllHosts(void)
 #pragma mark - UI
 
 static UIWindow *gWindow;
-static UIView *gPanes[2];
+static UIView *gPanes[3];
 static UIView *gDivider;
 static BOOL gTestMode;
 static UIButton *gToggleButton;
@@ -1179,29 +1213,30 @@ static void RestoreSlot(int index)
 
 - (void)toggleTapped
 {
+    int count = PaneCount();
     if (!gUserClosed) {
         // Hide the panes but keep the window and button alive so the user can
         // tap again to restore. Stand the controllers down from Live first —
         // a controller holding Live while its scene gets occluded is the
         // classic foreground-consistency crash trigger (0.0.19 knew this).
         gUserClosed = YES;
-        for (int index = 0; index < 2; index++) {
+        for (int index = 0; index < count; index++) {
             if (gPanes[index]) gPanes[index].hidden = YES;
         }
         if (gDivider) gDivider.hidden = YES;
         SetToggleGlyph(@"⟳");
-        for (int index = 0; index < 2; index++) {
+        for (int index = 0; index < count; index++) {
             SlotSetMode(index, 0);
         }
         CLog(@"ui: overlay hidden by user (hosting kept alive)");
     } else {
         gUserClosed = NO;
-        for (int index = 0; index < 2; index++) {
+        for (int index = 0; index < count; index++) {
             if (gPanes[index]) gPanes[index].hidden = NO;
         }
         if (gDivider) gDivider.hidden = NO;
         SetToggleGlyph(@"✕");
-        for (int index = 0; index < 2; index++) {
+        for (int index = 0; index < count; index++) {
             RestoreSlot(index);
         }
         CLog(@"ui: overlay restored by user");
@@ -1217,27 +1252,40 @@ static void Layout(void)
     if (!gWindow) return;
     
     CGRect bounds = gWindow.bounds;
+    int count = PaneCount();
     
     if (gTestMode) {
-        // Phone test mode: portrait screen, top 60% = left-pane app,
-        // bottom 40% = right-pane app (same ratio as the car split).
-        CGFloat topHeight = floor(bounds.size.height * kSplitRatio);
-        if (gPanes[0]) gPanes[0].frame = CGRectMake(0, 0, bounds.size.width, topHeight);
-        if (gPanes[1]) gPanes[1].frame = CGRectMake(0, topHeight, bounds.size.width, bounds.size.height - topHeight);
-        gDivider.frame = CGRectMake(0, topHeight - 1, bounds.size.width, 2);
+        // Phone test mode: portrait screen, evenly split top-to-bottom.
+        CGFloat paneHeight = floor(bounds.size.height / count);
+        for (int index = 0; index < count; index++) {
+            if (gPanes[index]) {
+                gPanes[index].frame = CGRectMake(0, paneHeight * index,
+                                                 bounds.size.width, paneHeight);
+            }
+        }
+        // Divider lines between panes.
+        if (gDivider) {
+            // Single divider view: place it at the first boundary.
+            // For multiple panes we'd need multiple dividers, but one is enough
+            // as a visual hint; the panes' clipsToBounds handles the rest.
+            gDivider.frame = CGRectMake(0, paneHeight - 1, bounds.size.width, 2);
+        }
     } else {
+        // Car mode: leave the leftmost strip for the system sidebar, then
+        // evenly split the remaining width into N columns.
         CGFloat sideMargin = floor(bounds.size.width / 13.0);
         CGFloat usable = bounds.size.width - sideMargin;
-        CGFloat leftWidth = floor(usable * kSplitRatio);
+        CGFloat paneWidth = floor(usable / count);
         
-        if (gPanes[0]) {
-            gPanes[0].frame = CGRectMake(sideMargin, 0, leftWidth, bounds.size.height);
+        for (int index = 0; index < count; index++) {
+            if (gPanes[index]) {
+                gPanes[index].frame = CGRectMake(sideMargin + paneWidth * index, 0,
+                                                  paneWidth, bounds.size.height);
+            }
         }
-        if (gPanes[1]) {
-            gPanes[1].frame = CGRectMake(sideMargin + leftWidth, 0,
-                                         usable - leftWidth, bounds.size.height);
+        if (gDivider) {
+            gDivider.frame = CGRectMake(sideMargin + paneWidth, 0, 2, bounds.size.height);
         }
-        gDivider.frame = CGRectMake(sideMargin + leftWidth, 0, 2, bounds.size.height);
     }
     
     // Toggle button sits at the very top-left corner of the WHOLE car display
@@ -1320,12 +1368,16 @@ static void CreateInterface(BOOL testMode)
     window.backgroundColor = [UIColor clearColor];
     window.hidden = NO;
     
-    // Create two panes with blue translucent background.
+    int count = PaneCount();
+    
+    // Create panes with blue translucent background.
     UIColor *paneColor = [UIColor colorWithRed:0.05 green:0.20 blue:0.55 alpha:0.55];
-    gPanes[0] = MakePane(@"DashSplit 探针\n左屏", paneColor);
-    gPanes[1] = MakePane(@"DashSplit 探针\n右屏", paneColor);
-    [window addSubview:gPanes[0]];
-    [window addSubview:gPanes[1]];
+    NSArray *paneTitles = @[@"DashSplit 探针\n左屏", @"DashSplit 探针\n右屏", @"DashSplit 探针\n中屏"];
+    for (int index = 0; index < count; index++) {
+        NSString *title = index < paneTitles.count ? paneTitles[index] : [NSString stringWithFormat:@"DashSplit 探针\n屏%d", index];
+        gPanes[index] = MakePane(title, paneColor);
+        [window addSubview:gPanes[index]];
+    }
     
     gDivider = [[UIView alloc] initWithFrame:CGRectZero];
     gDivider.backgroundColor = [UIColor whiteColor];
@@ -1358,11 +1410,16 @@ static void CreateInterface(BOOL testMode)
     
     Layout();
     
-    CLog(@"ui: window=%@ bounds=%@ pane0=%@ pane1=%@",
+    NSMutableString *paneInfo = [NSMutableString string];
+    for (int index = 0; index < count; index++) {
+        if (index > 0) [paneInfo appendString:@" "];
+        [paneInfo appendFormat:@"pane%d=%@", index, NSStringFromCGRect(gPanes[index].frame)];
+    }
+    CLog(@"ui: window=%@ bounds=%@ %d-pane %@",
          NSStringFromClass([window class]),
          NSStringFromCGRect(window.bounds),
-         NSStringFromCGRect(gPanes[0].frame),
-         NSStringFromCGRect(gPanes[1].frame));
+         count,
+         paneInfo);
     
     NSFileManager *manager = [NSFileManager defaultManager];
     if ([manager fileExistsAtPath:@COCKPIT_HOSTING]) {
@@ -1375,18 +1432,31 @@ static void CreateInterface(BOOL testMode)
         [manager removeItemAtPath:@COCKPIT_CRASHED error:nil];
     }
     
+    // Collect bundle IDs for all panes.
     NSString *bid1 = HostBundleID1();
     NSString *bid2 = HostBundleID2();
-    CLog(@"ui: hosting %@ + %@ in %@", bid1, bid2, testMode ? @"phone test mode" : @"car mode");
+    NSString *bid3 = HostBundleID3();
+    NSArray *bidArr = [NSArray arrayWithObjects:bid1, bid2, bid3, nil];
+    
+    NSMutableString *hostLog = [NSMutableString string];
+    for (int index = 0; index < count; index++) {
+        if (index > 0) [hostLog appendString:@" + "];
+        [hostLog appendString:bidArr[index]];
+    }
+    CLog(@"ui: hosting %@ in %@", hostLog, testMode ? @"phone test mode" : @"car mode");
 
-    if (bid1.length > 0 && [bid1 isEqualToString:bid2]) {
-        // One app cannot drive two scenes at once — the shared
-        // sceneID means the second host would fight the first.
-        CLog(@"ui: both panes set to %@, hosting left pane only", bid1);
-        gSlots[0] = HostApplication(bid1, gPanes[0], 0);
-    } else {
-        gSlots[0] = HostApplication(bid1, gPanes[0], 0);
-        gSlots[1] = HostApplication(bid2, gPanes[1], 1);
+    // Deduplicate: if the same app appears in multiple panes, only host it once
+    // (first occurrence wins). One app cannot drive two scenes at once.
+    NSMutableArray *seenBIDs = [NSMutableArray array];
+    for (int index = 0; index < count; index++) {
+        NSString *bid = bidArr[index];
+        if (bid.length == 0) continue;
+        if ([seenBIDs containsObject:bid]) {
+            CLog(@"ui: pane %d set to %@ (duplicate, skipping)", index, bid);
+            continue;
+        }
+        [seenBIDs addObject:bid];
+        gSlots[index] = HostApplication(bid, gPanes[index], index);
     }
 }
 
@@ -1420,7 +1490,8 @@ static BOOL CarScreenConnected(void)
 static void HealthCheckSlots(void)
 {
     double now = CFAbsoluteTimeGetCurrent();
-    for (int index = 0; index < 2; index++) {
+    int count = PaneCount();
+    for (int index = 0; index < count; index++) {
         HostSlot *slot = gSlots[index];
         if (!slot || !slot.viewController) continue;
         if (now - slot.birth < 20) continue;
@@ -1486,8 +1557,8 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-                gPanes[0] = nil;
-                gPanes[1] = nil;
+                int count = PaneCount();
+                for (int i = 0; i < count; i++) gPanes[i] = nil;
                 gDivider = nil;
                 gToggleButton = nil;
                 gTestMode = NO;
@@ -1524,7 +1595,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.15 loaded ---");
+        CLog(@"--- DashSplit 0.1.17 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

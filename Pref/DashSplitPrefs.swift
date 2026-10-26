@@ -14,10 +14,14 @@ private let prefsFile = "/var/mobile/Library/Preferences/lilliana.dashsplit.plis
 private let keyEnabled = "Enabled"
 private let keyLeft = "HostBundleID"
 private let keyRight = "HostBundleID2"
+private let keyThird = "HostBundleID3"
 private let keyStretchFill = "StretchFill"
+private let keySplitMode = "SplitMode"
+
 // Uninstallable system apps: the defaults must exist on every device.
 private let defaultLeft = "com.apple.mobiletimer"   // 时钟
 private let defaultRight = "com.apple.mobilecal"     // 日历
+private let defaultThird = "com.apple.calculator"   // 计算器
 
 private let prefsDomain = "lilliana.dashsplit" as CFString
 
@@ -40,6 +44,16 @@ private func currentSelection(_ key: String, _ fallback: String) -> String {
     }
     if let value = loadPrefs()[key] as? String, !value.isEmpty { return value }
     return fallback
+}
+
+private func currentSplitMode() -> Int {
+    if let value = CFPreferencesCopyAppValue(keySplitMode as CFString, prefsDomain) as? Int {
+        return value == 3 ? 3 : 2
+    }
+    if let value = loadPrefs()[keySplitMode] as? Int {
+        return value == 3 ? 3 : 2
+    }
+    return 2
 }
 
 private func appName(for bundleID: String, apps: [[String: String]]) -> String {
@@ -187,6 +201,82 @@ final class DashSplitRightAppPicker: AppPickerController {
     override var fallbackID: String { defaultRight }
 }
 
+@objc(DashSplitThirdAppPicker)
+final class DashSplitThirdAppPicker: AppPickerController {
+    override var paneKey: String { keyThird }
+    override var paneTitle: String { "第三屏应用" }
+    override var fallbackID: String { defaultThird }
+}
+
+// Split mode picker: a simple list to choose 2-way or 3-way split.
+private final class SplitModeRowTarget: NSObject {
+    let mode: Int
+    weak var picker: SplitModePickerController?
+
+    init(mode: Int, picker: SplitModePickerController?) {
+        self.mode = mode
+        self.picker = picker
+    }
+
+    @objc func selectMode() {
+        setPref(mode, forKey: keySplitMode)
+        NSLog("[DashSplitPref] set SplitMode = %d", mode)
+        if let nav = picker?.navigationController, nav.viewControllers.count >= 2,
+           let parent = nav.viewControllers[nav.viewControllers.count - 2] as? DashSplitPrefListController {
+            parent.refreshPane()
+        }
+        picker?.navigationController?.popViewController(animated: true)
+    }
+}
+
+class SplitModePickerController: PSListController {
+    private var rowTargets: [SplitModeRowTarget] = []
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "分屏模式"
+    }
+
+    override var specifiers: NSMutableArray? {
+        get {
+            if let specifiers = value(forKey: "_specifiers") as? NSMutableArray {
+                return specifiers
+            }
+
+            let current = currentSplitMode()
+            rowTargets = []
+
+            var specifiers = NSMutableArray()
+            specifiers.add(PSSpecifier.emptyGroup())
+
+            let modes: [(Int, String)] = [(2, "2分屏"), (3, "3分屏")]
+            for (mode, name) in modes {
+                let title = mode == current ? "当前: \(name)" : name
+                let target = SplitModeRowTarget(mode: mode, picker: self)
+                rowTargets.append(target)
+                let row = PSSpecifier.preferenceSpecifierNamed(
+                    title,
+                    target: target,
+                    set: nil,
+                    get: nil,
+                    detail: nil,
+                    cell: .buttonCell,
+                    edit: nil
+                )
+                row?.buttonAction = #selector(SplitModeRowTarget.selectMode)
+                if let row = row { specifiers.add(row) }
+            }
+
+            setValue(specifiers, forKey: "_specifiers")
+            return specifiers
+        }
+        set { super.specifiers = newValue }
+    }
+}
+
+@objc(DashSplitSplitModePicker)
+final class DashSplitSplitModePicker: SplitModePickerController {}
+
 @objc(DashSplitPrefListController)
 final class DashSplitPrefListController: PSListController {
     override func viewDidLoad() {
@@ -202,6 +292,21 @@ final class DashSplitPrefListController: PSListController {
         let apps = installedApps()
         let row = PSSpecifier.preferenceSpecifierNamed(
             "\(title):\(appName(for: current, apps: apps))",
+            target: self,
+            set: nil,
+            get: nil,
+            detail: detail,
+            cell: .linkCell,
+            edit: nil
+        )
+        return row
+    }
+
+    // A simple link row that pushes a detail controller — used for the split
+    // mode picker where there is no "current app" to show.
+    private func linkRow(_ title: String, detail: AnyClass) -> PSSpecifier? {
+        let row = PSSpecifier.preferenceSpecifierNamed(
+            title,
             target: self,
             set: nil,
             get: nil,
@@ -235,10 +340,16 @@ final class DashSplitPrefListController: PSListController {
                 ToggleCell(name: "启用分屏", key: keyEnabled, defaultValue: true)
             ], to: &specifiers, in: self)
 
+            // Split mode selector row.
+            let modeName = currentSplitMode() == 3 ? "3分屏" : "2分屏"
+            if let modeRow = linkRow("分屏模式:\(modeName)", detail: DashSplitSplitModePicker.self) {
+                specifiers.add(modeRow)
+            }
+
             SpecifierFactory.add([
                 GroupCell(
                     name: "分屏应用",
-                    footerText: "点进去选择 App;更改后重新连接 CarPlay 生效;两个半屏选同一个 App 时只投左半屏。"
+                    footerText: "点进去选择 App;更改后重新连接 CarPlay 生效;同一个 App 只投第一个出现的区域。"
                 )
             ], to: &specifiers, in: self)
             if let left = paneRow("左半屏应用", current: currentSelection(keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
@@ -246,6 +357,12 @@ final class DashSplitPrefListController: PSListController {
             }
             if let right = paneRow("右半屏应用", current: currentSelection(keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
                 specifiers.add(right)
+            }
+            // Only show the third pane picker in 3-split mode.
+            if currentSplitMode() == 3 {
+                if let third = paneRow("第三屏应用", current: currentSelection(keyThird, defaultThird), detail: DashSplitThirdAppPicker.self) {
+                    specifiers.add(third)
+                }
             }
 
             SpecifierFactory.add([
