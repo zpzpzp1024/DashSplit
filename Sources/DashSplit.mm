@@ -794,12 +794,25 @@ static void DashSplitSceneDidUpdate(id self, SEL _cmd, id scene, id diff, id old
             // in Live mode trips the assertion on the NEXT diff). Standing
             // down everyone is safe — HealthCheckSlots will revive them when
             // the system reports them active again.
+            //
+            // 0.1.22: skip slots still in their birth grace window (< 20s).
+            // CarPlay connect triggers system scene diffs that briefly set
+            // foreground=No during initial setup — standing down a fresh
+            // host here makes the panes flash off then back on (the user
+            // sees "show -> disappear -> reappear"). The preempt is only
+            // needed for established hosts whose foreground is going No due
+            // to phone-side activity, not for brand-new ones still settling.
+            double now = CFAbsoluteTimeGetCurrent();
             int count = PaneCount();
             NSString *sceneText = SceneMatchText(scene);
             for (int index = 0; index < count; index++) {
                 HostSlot *slot = gSlots[index];
                 if (!slot || !slot.viewController) continue;
                 if (slot.suppressed) continue;  // already stood down
+                if (now - slot.birth < 20) {
+                    CLog(@"preempt[%d]: foreground=No diff for %@, skipping (birth grace, age=%.1fs)", index, slot.bundleID, now - slot.birth);
+                    continue;
+                }
                 CLog(@"preempt[%d]: foreground=No diff for %@, standing down (scene=%@)", index, slot.bundleID, sceneText);
                 slot.suppressed = 1;
                 SlotSetMode(index, 0);
@@ -1629,7 +1642,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.20 loaded ---");
+        CLog(@"--- DashSplit 0.1.22 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
