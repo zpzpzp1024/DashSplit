@@ -1,5 +1,16 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.23: manual start on CarPlay connect. The 0.1.21 connect log shows the
+// "show -> disappear -> reappear" loop is SpringBoard crashing: CarPlay
+// setup delivers a foreground=No scene-settings wave ~10s after connect
+// that hits our freshly-Live controllers (uncatchable assertion -> resync
+// to 0 = panes vanish -> respring = panes rebuild). Fix without any new
+// hooks: on connect show ONLY the toggle button; hosting (and thus Live
+// mode) begins on the user's tap, and a tap inside the 30s connect settle
+// window defers hosting until the window passes. The wave finds no Live
+// controller to kill, so nothing crashes. Phone test mode keeps the old
+// auto-host behavior (the wave is CarPlay-specific).
+//
 // 0.1.9: phone test mode hosts BOTH panes on the phone screen (top 60% =
 // left app, bottom 40% = right app, same ratio as the car split) and gets a
 // 手机测试模式 toggle in the Settings pane (TestOnMainScreen).
@@ -534,6 +545,15 @@ static void DumpProbe(void)
 
 static HostSlot *gSlots[3];
 static BOOL gUserClosed = NO;
+
+// 0.1.23 manual-start state (see header note). gConnectAt marks when the car
+// display was (re)connected; CONNECT_SETTLE_SECONDS is how long after connect
+// the CarPlay setup wave can still arrive (observed at ~10s; padded to 30s).
+static const double CONNECT_SETTLE_SECONDS = 30.0;
+static BOOL gAwaitingStart = NO;     // car mode: button shown, hosting not begun
+static BOOL gPendingStart = NO;      // tapped during settle window; host when it passes
+static double gConnectAt = 0;        // CFAbsoluteTime of (re)connect; 0 = never
+static BOOL gAutoStartOnCreate = NO; // rebuild path: interface was live, host at once
 
 static BOOL SetCurrentMode(id viewController, NSInteger mode)
 {
@@ -1175,6 +1195,8 @@ static void TeardownAllHosts(void)
         }
     }
     gUserClosed = NO;
+    gAwaitingStart = NO;
+    gPendingStart = NO;
 }
 
 #pragma mark - UI
@@ -1222,6 +1244,61 @@ static void RestoreSlot(int index)
     gSlots[index] = HostApplication(slot.bundleID, slot.container, index);
 }
 
+// Host the configured apps into the already-created panes. Deduplicate: if
+// the same app appears in multiple panes, only host it once (first occurrence
+// wins — one app cannot drive two scenes at once). Extracted from
+// CreateInterface so StartNow can run the exact same sequence.
+static void HostAllPanes(BOOL testMode)
+{
+    int count = PaneCount();
+    NSString *bid1 = HostBundleID1();
+    NSString *bid2 = HostBundleID2();
+    NSString *bid3 = HostBundleID3();
+    NSArray *bidArr = [NSArray arrayWithObjects:bid1, bid2, bid3, nil];
+    
+    NSMutableString *hostLog = [NSMutableString string];
+    for (int index = 0; index < count; index++) {
+        if (index > 0) [hostLog appendString:@" + "];
+        [hostLog appendString:bidArr[index]];
+    }
+    CLog(@"ui: hosting %@ in %@", hostLog, testMode ? @"phone test mode" : @"car mode");
+    
+    NSMutableArray *seenBIDs = [NSMutableArray array];
+    for (int index = 0; index < count; index++) {
+        NSString *bid = bidArr[index];
+        if (bid.length == 0) continue;
+        if ([seenBIDs containsObject:bid]) {
+            CLog(@"ui: pane %d set to %@ (duplicate, skipping)", index, bid);
+            continue;
+        }
+        [seenBIDs addObject:bid];
+        gSlots[index] = HostApplication(bid, gPanes[index], index);
+    }
+}
+
+static void ShowPanes(void)
+{
+    int count = PaneCount();
+    for (int index = 0; index < count; index++) {
+        if (gPanes[index]) gPanes[index].hidden = NO;
+    }
+    for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
+    SetToggleGlyph(@"✕");
+}
+
+// 0.1.23: begin hosting on the user's signal. Called from the toggle's start
+// branch (tap after the settle window) or from Tick (deferred tap whose
+// window has now passed). Hosting only ever starts AFTER the connect wave,
+// so the uncatchable foreground assertion never finds a Live controller.
+static void StartNow(void)
+{
+    gAwaitingStart = NO;
+    gPendingStart = NO;
+    ShowPanes();
+    CLog(@"ui: split view starting (hosting now)");
+    HostAllPanes(NO);
+}
+
 @interface DashSplitControl : NSObject
 - (void)toggleTapped;
 @end
@@ -1231,6 +1308,20 @@ static void RestoreSlot(int index)
 - (void)toggleTapped
 {
     int count = PaneCount();
+    if (gAwaitingStart) {
+        // 0.1.23 start button. A tap inside the settle window shows the
+        // (still empty) panes for feedback but defers hosting — the CarPlay
+        // setup wave is still due and must not find a Live controller.
+        double age = gConnectAt > 0 ? CFAbsoluteTimeGetCurrent() - gConnectAt : CONNECT_SETTLE_SECONDS;
+        if (age < CONNECT_SETTLE_SECONDS) {
+            gPendingStart = YES;
+            ShowPanes();
+            CLog(@"ui: start tapped %.0fs after connect — panes shown, hosting deferred to the %.0fs mark", age, CONNECT_SETTLE_SECONDS);
+        } else {
+            StartNow();
+        }
+        return;
+    }
     if (!gUserClosed) {
         // Hide the panes but keep the window and button alive so the user can
         // tap again to restore. Stand the controllers down from Live first —
@@ -1453,32 +1544,23 @@ static void CreateInterface(BOOL testMode)
         [manager removeItemAtPath:@COCKPIT_CRASHED error:nil];
     }
     
-    // Collect bundle IDs for all panes.
-    NSString *bid1 = HostBundleID1();
-    NSString *bid2 = HostBundleID2();
-    NSString *bid3 = HostBundleID3();
-    NSArray *bidArr = [NSArray arrayWithObjects:bid1, bid2, bid3, nil];
-    
-    NSMutableString *hostLog = [NSMutableString string];
-    for (int index = 0; index < count; index++) {
-        if (index > 0) [hostLog appendString:@" + "];
-        [hostLog appendString:bidArr[index]];
-    }
-    CLog(@"ui: hosting %@ in %@", hostLog, testMode ? @"phone test mode" : @"car mode");
-
-    // Deduplicate: if the same app appears in multiple panes, only host it once
-    // (first occurrence wins). One app cannot drive two scenes at once.
-    NSMutableArray *seenBIDs = [NSMutableArray array];
-    for (int index = 0; index < count; index++) {
-        NSString *bid = bidArr[index];
-        if (bid.length == 0) continue;
-        if ([seenBIDs containsObject:bid]) {
-            CLog(@"ui: pane %d set to %@ (duplicate, skipping)", index, bid);
-            continue;
+    if (testMode || gAutoStartOnCreate) {
+        // Phone test mode (the connect wave never happens there) and rebuilds
+        // of an already-running interface keep the old auto-host behavior.
+        HostAllPanes(testMode);
+    } else {
+        // 0.1.23: fresh CarPlay connect — show ONLY the start button. Panes
+        // and dividers stay hidden and nothing is hosted until the user
+        // taps (see toggleTapped / StartNow).
+        gAwaitingStart = YES;
+        for (int index = 0; index < count; index++) {
+            if (gPanes[index]) gPanes[index].hidden = YES;
         }
-        [seenBIDs addObject:bid];
-        gSlots[index] = HostApplication(bid, gPanes[index], index);
+        for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+        SetToggleGlyph(@"▶");
+        CLog(@"ui: car mode — split view awaits a tap on the start button");
     }
+    gAutoStartOnCreate = NO;
 }
 
 #pragma mark - Lifecycle
@@ -1564,17 +1646,35 @@ static void Tick(void)
         BOOL carConnected = CarScreenConnected();
         BOOL testMode = (!carConnected && TestModeEnabled());
         
+        // 0.1.23: timestamp the (re)connect — the settle window for the
+        // CarPlay setup wave runs from here. Rebuild ticks enter with a
+        // window already up, so an in-flight interface keeps its timestamp.
+        if (carConnected && !gWindow) {
+            gConnectAt = CFAbsoluteTimeGetCurrent();
+        }
+        
         if (!carConnected && !testMode) {
-            if (gWindow && !gWindow.hidden) {
+            // 0.1.23: FULL teardown instead of hide-and-keep — a kept window
+            // with nil slots left EMPTY panes on reconnect. Tearing the
+            // window down too makes every reconnect a clean create (fresh
+            // settle window, start button again).
+            if (gWindow) {
                 TeardownAllHosts();
                 gWindow.hidden = YES;
-                CLog(@"lifecycle: car display gone, window hidden");
+                gWindow = nil;
+                for (int i = 0; i < 3; i++) gPanes[i] = nil;
+                for (int i = 0; i < 2; i++) gDividers[i] = nil;
+                gToggleButton = nil;
+                gCurrentPaneCount = 0;
+                gTestMode = NO;
+                CLog(@"lifecycle: car display gone, torn down for a clean reconnect");
             }
             return;
         }
         
         if (gWindow) {
             if (carConnected && gTestMode) {
+                gAutoStartOnCreate = YES;   // was live in test mode; stay live on the car display
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
@@ -1589,6 +1689,7 @@ static void Tick(void)
                 // Split mode changed (2<->3): tear down everything and rebuild
                 // so the new pane count and layout take effect.
                 CLog(@"lifecycle: split mode changed %d->%d, rebuilding", gCurrentPaneCount, PaneCount());
+                gAutoStartOnCreate = YES;   // interface was already started; rebuild hosts at once
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
@@ -1601,7 +1702,13 @@ static void Tick(void)
                 if (gWindow.hidden && !gUserClosed) {
                     gWindow.hidden = NO;
                 }
-                if (!gUserClosed) {
+                // Deferred start from an early tap: the settle window passed.
+                if (gPendingStart && gConnectAt > 0 &&
+                    CFAbsoluteTimeGetCurrent() - gConnectAt >= CONNECT_SETTLE_SECONDS) {
+                    CLog(@"ui: settle window passed, starting deferred hosting");
+                    StartNow();
+                }
+                if (!gUserClosed && !gAwaitingStart) {
                     HealthCheckSlots();
                 }
                 return;
@@ -1629,7 +1736,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.20 loaded ---");
+        CLog(@"--- DashSplit 0.1.23 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
