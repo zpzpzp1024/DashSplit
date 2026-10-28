@@ -1,5 +1,16 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.28: never-Live-while-unlocked. The 0.1.27 field log shows every
+// respring came from ENTERING Live at an unsafe moment — a start 8s after
+// unlock (dead in 2s: the system pushes foreground=No straight into the
+// freshly-Live controllers while the phone is in use) and two restores
+// while locked (dead after 12s/58s). The unlock auto-hide itself never
+// caused a crash. So every path into Live now checks the phone's lock
+// state (kept current via the lockstate Darwin note, seeded by an
+// initial-state query): a ▶/⟳ tap while unlocked is remembered
+// (gPendingShow) and executed on the next lock event. Unlock still
+// auto-hides; lock alone never shows anything.
+//
 // 0.1.27: auto-hide on phone unlock (fixes the stable-connection crash).
 // While hosting is Live, unlocking the phone and opening any app delivers
 // foreground=No to the hosted scenes' controllers -> the uncatchable
@@ -566,6 +577,17 @@ static BOOL gAwaitingStart = NO;     // car mode: button shown, hosting not begu
 static BOOL gPendingStart = NO;      // tapped during settle window; host when it passes
 static double gConnectAt = 0;        // CFAbsoluteTime of (re)connect; 0 = never
 static BOOL gAutoStartOnCreate = NO; // rebuild path: interface was live, host at once
+
+// 0.1.28 never-Live-while-unlocked policy. The 0.1.27 log shows all three
+// resprings came from ENTERING Live at an unsafe moment, never from the
+// unlock handler itself: a start 8s after unlock died in 2s (the system
+// pushes foreground=No straight into freshly-Live controllers while the
+// phone is in use), and two restores-while-locked died after 12s/58s. So
+// the button never goes Live while the phone is unlocked — the request is
+// remembered and runs on the next lock event.
+static BOOL gPhoneLocked = NO;    // last observed phone lock state
+static BOOL gLockStateKnown = NO; // initial-state query succeeded
+static int gPendingShow = 0;      // 0 none; 1 start / 2 restore requested while unlocked
 
 static BOOL SetCurrentMode(id viewController, NSInteger mode)
 {
@@ -1209,6 +1231,7 @@ static void TeardownAllHosts(void)
     gUserClosed = NO;
     gAwaitingStart = NO;
     gPendingStart = NO;
+    gPendingShow = 0;
 }
 
 #pragma mark - UI
@@ -1330,6 +1353,23 @@ static void StartNow(void)
     HostAllPanes(NO);
 }
 
+// 0.1.28: the restore half of the toggle, extracted so a restore deferred
+// from an unlocked moment can run when the phone next locks.
+static void RestoreNow(void)
+{
+    gUserClosed = NO;
+    int count = PaneCount();
+    for (int index = 0; index < count; index++) {
+        if (gPanes[index]) gPanes[index].hidden = NO;
+    }
+    for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
+    SetToggleGlyph(@"✕");
+    for (int index = 0; index < count; index++) {
+        RestoreSlot(index);
+    }
+    CLog(@"ui: overlay restored");
+}
+
 @interface DashSplitControl : NSObject
 - (void)toggleTapped;
 @end
@@ -1338,8 +1378,18 @@ static void StartNow(void)
 
 - (void)toggleTapped
 {
-    int count = PaneCount();
     if (gAwaitingStart) {
+        // 0.1.28: never enter Live while the phone is unlocked. The 19:10
+        // session started hosting 8s after unlock and died 2s later — with
+        // the phone in use the system pushes foreground=No straight into
+        // freshly-Live controllers. Remember the request; run it on the
+        // next lock event.
+        if (gLockStateKnown && !gPhoneLocked) {
+            gPendingShow = 1;
+            ShowPanes();
+            CLog(@"ui: start requested but phone unlocked — deferred until the phone locks");
+            return;
+        }
         // 0.1.23 start button. A tap inside the settle window shows the
         // (still empty) panes for feedback but defers hosting — the CarPlay
         // setup wave is still due and must not find a Live controller.
@@ -1360,16 +1410,13 @@ static void StartNow(void)
         // classic foreground-consistency crash trigger (0.0.19 knew this).
         HidePanesAndStandDown(@"hidden by user");
     } else {
-        gUserClosed = NO;
-        for (int index = 0; index < count; index++) {
-            if (gPanes[index]) gPanes[index].hidden = NO;
+        // 0.1.28: same never-Live-while-unlocked gate for restores.
+        if (gLockStateKnown && !gPhoneLocked) {
+            gPendingShow = 2;
+            CLog(@"ui: restore requested but phone unlocked — deferred until the phone locks");
+            return;
         }
-        for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
-        SetToggleGlyph(@"✕");
-        for (int index = 0; index < count; index++) {
-            RestoreSlot(index);
-        }
-        CLog(@"ui: overlay restored by user");
+        RestoreNow();
     }
 }
 
@@ -1391,8 +1438,20 @@ static void HandleLockStateChanged(int token)
 {
     uint64_t locked = 1;
     notify_get_state(token, &locked);
-    if (locked != 0) {
+    gPhoneLocked = (locked != 0);
+    if (gPhoneLocked) {
         CLog(@"lock: phone locked — leaving the split view as-is");
+        // 0.1.28: a start/restore the user requested while the phone was
+        // unlocked is now safe to run (never-Live-while-unlocked policy).
+        if (gPendingShow == 1) {
+            gPendingShow = 0;
+            CLog(@"lock: running deferred start");
+            StartNow();
+        } else if (gPendingShow == 2) {
+            gPendingShow = 0;
+            CLog(@"lock: running deferred restore");
+            RestoreNow();
+        }
         return;
     }
     
@@ -1435,6 +1494,19 @@ static void InstallLockStateObserver(void)
                                                 ^(int t) { HandleLockStateChanged(t); });
     if (status == NOTIFY_STATUS_OK) {
         CLog(@"lock: lockstate observer installed");
+        // 0.1.28: query the CURRENT state so the never-Live-while-unlocked
+        // gate works from the first tap, without waiting for a lock/unlock
+        // event to teach it the state.
+        int checkToken = 0;
+        if (notify_register_check("com.apple.springboard.lockstate", &checkToken) == NOTIFY_STATUS_OK) {
+            uint64_t state = 0;
+            notify_get_state(checkToken, &state);
+            gPhoneLocked = (state != 0);
+            gLockStateKnown = YES;
+            CLog(@"lock: initial state locked=%d", gPhoneLocked);
+        } else {
+            CLog(@"lock: initial-state query failed — unlock gating inactive until first event");
+        }
     } else {
         CLog(@"lock: observer registration failed (%u)", status);
     }
@@ -1790,8 +1862,17 @@ static void Tick(void)
                 // Deferred start from an early tap: the settle window passed.
                 if (gPendingStart && gConnectAt > 0 &&
                     CFAbsoluteTimeGetCurrent() - gConnectAt >= CONNECT_SETTLE_SECONDS) {
-                    CLog(@"ui: settle window passed, starting deferred hosting");
-                    StartNow();
+                    if (gLockStateKnown && !gPhoneLocked) {
+                        // 0.1.28: the settle window is over but the phone is
+                        // unlocked — keep waiting for the next lock instead
+                        // of walking into the foreground=No wave.
+                        gPendingStart = NO;
+                        gPendingShow = 1;
+                        CLog(@"ui: settle window passed but phone unlocked — start deferred to next lock");
+                    } else {
+                        CLog(@"ui: settle window passed, starting deferred hosting");
+                        StartNow();
+                    }
                 }
                 if (!gUserClosed && !gAwaitingStart) {
                     HealthCheckSlots();
@@ -1821,7 +1902,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.27 loaded ---");
+        CLog(@"--- DashSplit 0.1.28 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
