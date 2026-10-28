@@ -1,5 +1,16 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.27: auto-hide on phone unlock (fixes the stable-connection crash).
+// While hosting is Live, unlocking the phone and opening any app delivers
+// foreground=No to the hosted scenes' controllers -> the uncatchable
+// foreground-consistency assertion -> SpringBoard respring -> the car panes
+// vanish. User-verified on-device: with the panes hidden (mode 0) phone-side
+// app launches NEVER respring. So: subscribe to the system lock-state Darwin
+// note (com.apple.springboard.lockstate — an event subscription, NOT a
+// method hook) and on unlock run the exact same stand-down as the toggle
+// button's hide branch. Lock events do nothing (no auto-show); restoring is
+// always a manual tap. A pending deferred start is cancelled on unlock too.
+//
 // 0.1.23: manual start on CarPlay connect. The 0.1.21 connect log shows the
 // "show -> disappear -> reappear" loop is SpringBoard crashing: CarPlay
 // setup delivers a foreground=No scene-settings wave ~10s after connect
@@ -61,6 +72,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <notify.h>
 #import <stdarg.h>
 #import <stdio.h>
 #import <signal.h>
@@ -1217,6 +1229,25 @@ static void SetToggleGlyph(NSString *glyph)
     [gToggleButton setTitle:glyph forState:UIControlStateHighlighted];
 }
 
+// 0.1.27: the hide half of the toggle, extracted so the phone-unlock
+// listener runs the IDENTICAL sequence the user manually verified as
+// crash-proof (panes hidden + every controller stood down to mode 0 BEFORE
+// any phone-side app can background our scenes).
+static void HidePanesAndStandDown(NSString *why)
+{
+    int count = PaneCount();
+    gUserClosed = YES;
+    for (int index = 0; index < count; index++) {
+        if (gPanes[index]) gPanes[index].hidden = YES;
+    }
+    for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+    SetToggleGlyph(@"⟳");
+    for (int index = 0; index < count; index++) {
+        SlotSetMode(index, 0);
+    }
+    CLog(@"ui: overlay hidden (%@) — hosting kept alive", why);
+}
+
 static void RestoreSlot(int index)
 {
     HostSlot *slot = gSlots[index];
@@ -1327,16 +1358,7 @@ static void StartNow(void)
         // tap again to restore. Stand the controllers down from Live first —
         // a controller holding Live while its scene gets occluded is the
         // classic foreground-consistency crash trigger (0.0.19 knew this).
-        gUserClosed = YES;
-        for (int index = 0; index < count; index++) {
-            if (gPanes[index]) gPanes[index].hidden = YES;
-        }
-        for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
-        SetToggleGlyph(@"⟳");
-        for (int index = 0; index < count; index++) {
-            SlotSetMode(index, 0);
-        }
-        CLog(@"ui: overlay hidden by user (hosting kept alive)");
+        HidePanesAndStandDown(@"hidden by user");
     } else {
         gUserClosed = NO;
         for (int index = 0; index < count; index++) {
@@ -1354,6 +1376,69 @@ static void StartNow(void)
 @end
 
 static DashSplitControl *gControl;
+
+#pragma mark - Phone lock state
+
+// 0.1.27: SpringBoard posts the com.apple.springboard.lockstate Darwin
+// note on every lock AND unlock, carrying the new state readable via
+// notify_get_state (1 = locked, 0 = unlocked). Subscribing is a plain event
+// listener — no method is hooked, so nothing here can destabilize the host
+// process. On unlock we stand the split view down (the user-verified
+// crash-proof state) BEFORE the user can open any phone app that would
+// background our Live scenes. Lock events intentionally do nothing: no
+// auto-show, and auto-lock while driving must not blank the car panes.
+static void HandleLockStateChanged(int token)
+{
+    uint64_t locked = 1;
+    notify_get_state(token, &locked);
+    if (locked != 0) {
+        CLog(@"lock: phone locked — leaving the split view as-is");
+        return;
+    }
+    
+    CLog(@"lock: phone unlocked");
+    
+    // Nothing hosted yet on the car display — a deferred early tap must not
+    // turn into a Live host while the user is about to use the phone.
+    if (gAwaitingStart) {
+        if (gPendingStart) {
+            gPendingStart = NO;
+            int count = PaneCount();
+            for (int index = 0; index < count; index++) {
+                if (gPanes[index]) gPanes[index].hidden = YES;
+            }
+            for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+            SetToggleGlyph(@"▶");
+            CLog(@"lock: pending start cancelled on unlock — tap ▶ again later");
+        }
+        return;
+    }
+    
+    // Already hidden (manually or by a previous unlock) or not on the car
+    // display — nothing to stand down. Phone test mode never reacts to
+    // unlock: it lives on the phone screen and is for debugging only.
+    if (!gWindow || gTestMode || gUserClosed) return;
+    
+    HidePanesAndStandDown(@"auto: phone unlocked");
+}
+
+static void InstallLockStateObserver(void)
+{
+    static BOOL installed = NO;
+    if (installed) return;
+    installed = YES;
+    
+    int token = 0;
+    uint32_t status = notify_register_dispatch("com.apple.springboard.lockstate",
+                                                &token,
+                                                dispatch_get_main_queue(),
+                                                ^(int t) { HandleLockStateChanged(t); });
+    if (status == NOTIFY_STATUS_OK) {
+        CLog(@"lock: lockstate observer installed");
+    } else {
+        CLog(@"lock: observer registration failed (%u)", status);
+    }
+}
 
 static void Layout(void)
 {
@@ -1736,7 +1821,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.23 loaded ---");
+        CLog(@"--- DashSplit 0.1.27 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
@@ -1772,6 +1857,7 @@ static void DashSplitInit(void)
                 CLog(@"init: one-time test-mode reset applied (default OFF)");
             }
             InstallSceneDiffHook();
+            InstallLockStateObserver();
             LogPrefsState();
             LogHostingAPI();
             DumpProbe();
