@@ -114,8 +114,8 @@ static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
 static NSString *const kPrefsStretchFill = @"StretchFill";
 static NSString *const kPrefsSplitMode = @"SplitMode";
-// Split ratio: integer percent (1-99) for the first pane's share of the usable
-// width. 0 means "default" — auto 1:2 in 2-split, equal in 3-split.
+// Split ratio: integer (1-5) for each pane's relative weight. 0 means
+// "default" — auto 1:2 in 2-split, 1:1:1 in 3-split, ignored in 1-split.
 static NSString *const kPrefsSplitRatio = @"SplitRatio";
 static NSString *const kPrefsSplitRatio2 = @"SplitRatio2"; // 3-split: pane2 share
 static NSString *const kPrefsSplitRatio3 = @"SplitRatio3"; // 3-split: pane3 share
@@ -283,35 +283,42 @@ static BOOL StretchFillEnabled(void)
     return PrefBool(kPrefsStretchFill, NO);
 }
 
-// Split mode: 2 = two-way split (default), 3 = three-way split.
+// Split mode: 1 = single app (no split), 2 = two-way split (default), 3 = three-way split.
 static int SplitMode(void)
 {
     int mode = (int)PrefInteger(kPrefsSplitMode, 2);
-    return (mode == 3) ? 3 : 2;
+    if (mode < 1) return 2;
+    if (mode > 3) return 3;
+    return mode;
 }
 
 // Split ratios: each pane's relative weight. Defaults are 0 (meaning
 // "use built-in defaults": 1:2 in 2-split, 1:1:1 in 3-split). The values
-// are integers 1-99 representing relative proportions; the Layout function
-// normalises them to actual pixel widths.
+// are integers 1-5 representing relative proportions; the Layout function
+// normalises them to actual pixel widths. 1-split ignores ratios entirely.
 static void SplitRatios(int count, int ratios[3])
 {
     int r1 = (int)PrefInteger(kPrefsSplitRatio, 0);
     int r2 = (int)PrefInteger(kPrefsSplitRatio2, 0);
     int r3 = (int)PrefInteger(kPrefsSplitRatio3, 0);
 
-    if (count == 2) {
+    if (count <= 1) {
+        // 1-split: single pane takes everything.
+        ratios[0] = 1;
+    } else if (count == 2) {
         // 2-split: use r1 for pane1, r2 (if set) for pane2. If r2 is 0 but
-        // r1 is set, pane2 gets the remainder (100-r1). If both 0, default 1:2.
+        // r1 is set, pane2 gets the complement (6-r1) to keep total 6. If
+        // both 0, default 1:2.
         if (r1 > 0) {
             ratios[0] = r1;
-            ratios[1] = (r2 > 0) ? r2 : (100 - r1);
+            ratios[1] = (r2 > 0) ? r2 : (6 - r1);
+            if (ratios[1] < 1) ratios[1] = 1;
         } else {
             ratios[0] = 1;  // default 1:2
             ratios[1] = 2;
         }
     } else {
-        // 3-split: if all three set use them; if none set, equal (1:1:1).
+        // 3-split: if any set use them; if none set, equal (1:1:1).
         if (r1 > 0 || r2 > 0 || r3 > 0) {
             ratios[0] = r1 > 0 ? r1 : 1;
             ratios[1] = r2 > 0 ? r2 : 1;

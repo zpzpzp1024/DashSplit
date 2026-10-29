@@ -54,10 +54,14 @@ private func currentSelection(_ key: String, _ fallback: String) -> String {
 
 private func currentSplitMode() -> Int {
     if let value = CFPreferencesCopyAppValue(keySplitMode as CFString, prefsDomain) as? Int {
-        return value == 3 ? 3 : 2
+        if value < 1 { return 2 }
+        if value > 3 { return 3 }
+        return value
     }
     if let value = loadPrefs()[keySplitMode] as? Int {
-        return value == 3 ? 3 : 2
+        if value < 1 { return 2 }
+        if value > 3 { return 3 }
+        return value
     }
     return 2
 }
@@ -74,6 +78,9 @@ private func currentRatio(_ key: String, _ fallback: Int) -> Int {
 
 private func ratioDescription() -> String {
     let mode = currentSplitMode()
+    if mode == 1 {
+        return "单屏"
+    }
     if mode == 2 {
         let r1 = currentRatio(keySplitRatio, 0)
         if r1 > 0 {
@@ -81,7 +88,8 @@ private func ratioDescription() -> String {
             if r2 > 0 {
                 return "\(r1):\(r2)"
             }
-            return "\(r1):\(100 - r1)"
+            let comp = 6 - r1
+            return "\(r1):\(comp < 1 ? 1 : comp)"
         }
         return "1:2 (默认)"
     } else {
@@ -288,7 +296,7 @@ class SplitModePickerController: PSListController {
             var specifiers = NSMutableArray()
             specifiers.add(PSSpecifier.emptyGroup())
 
-            let modes: [(Int, String)] = [(2, "2分屏"), (3, "3分屏")]
+            let modes: [(Int, String)] = [(1, "1分屏"), (2, "2分屏"), (3, "3分屏")]
             for (mode, name) in modes {
                 let title = mode == current ? "当前: \(name)" : name
                 let target = SplitModeRowTarget(mode: mode, picker: self)
@@ -424,7 +432,12 @@ final class DashSplitPrefListController: PSListController {
             ], to: &specifiers, in: self)
 
             // Split mode selector row.
-            let modeName = currentSplitMode() == 3 ? "3分屏" : "2分屏"
+            let modeName: String
+            switch currentSplitMode() {
+            case 1: modeName = "1分屏"
+            case 3: modeName = "3分屏"
+            default: modeName = "2分屏"
+            }
             if let modeRow = linkRow("分屏模式:\(modeName)", detail: DashSplitSplitModePicker.self) {
                 specifiers.add(modeRow)
             }
@@ -438,8 +451,11 @@ final class DashSplitPrefListController: PSListController {
             if let left = paneRow("第1屏应用", current: currentSelection(keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
                 specifiers.add(left)
             }
-            if let right = paneRow("第2屏应用", current: currentSelection(keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
-                specifiers.add(right)
+            // Hide pane 2/3 pickers in 1-split mode.
+            if currentSplitMode() >= 2 {
+                if let right = paneRow("第2屏应用", current: currentSelection(keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
+                    specifiers.add(right)
+                }
             }
             // Only show the third pane picker in 3-split mode.
             if currentSplitMode() == 3 {
@@ -451,19 +467,24 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "分屏比例",
-                    footerText: "拖动滑块设置每屏占比(1-99)。2分屏只需设第1屏,第2屏自动取剩余;3分屏可分别设3个屏。不设则用默认(2分屏1:2,3分屏1:1:1)。更改后重启 SpringBoard 生效。"
-                ),
-                SliderCell(name: "第1屏占比", key: keySplitRatio, defaultValue: 0, range: 1..<100)
+                    footerText: "拖动滑块设置每屏占比(1-5)。2分屏只需设第1屏,第2屏自动取剩余;3分屏可分别设3个屏。不设则用默认(2分屏1:2,3分屏1:1:1)。1分屏无需设置。更改后重启 SpringBoard 生效。"
+                )
             ], to: &specifiers, in: self)
-            if currentSplitMode() == 3 {
+            // Hide ratio sliders in 1-split mode.
+            if currentSplitMode() >= 2 {
                 SpecifierFactory.add([
-                    SliderCell(name: "第2屏占比", key: keySplitRatio2, defaultValue: 0, range: 1..<100),
-                    SliderCell(name: "第3屏占比", key: keySplitRatio3, defaultValue: 0, range: 1..<100)
+                    SliderCell(name: "第1屏占比", key: keySplitRatio, defaultValue: 0, range: 1..<6)
                 ], to: &specifiers, in: self)
-            } else {
-                SpecifierFactory.add([
-                    SliderCell(name: "第2屏占比", key: keySplitRatio2, defaultValue: 0, range: 1..<100)
-                ], to: &specifiers, in: self)
+                if currentSplitMode() == 3 {
+                    SpecifierFactory.add([
+                        SliderCell(name: "第2屏占比", key: keySplitRatio2, defaultValue: 0, range: 1..<6),
+                        SliderCell(name: "第3屏占比", key: keySplitRatio3, defaultValue: 0, range: 1..<6)
+                    ], to: &specifiers, in: self)
+                } else {
+                    SpecifierFactory.add([
+                        SliderCell(name: "第2屏占比", key: keySplitRatio2, defaultValue: 0, range: 1..<6)
+                    ], to: &specifiers, in: self)
+                }
             }
 
             SpecifierFactory.add([
