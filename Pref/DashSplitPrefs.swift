@@ -16,6 +16,7 @@ private let keyLeft = "HostBundleID"
 private let keyRight = "HostBundleID2"
 private let keyThird = "HostBundleID3"
 private let keyStretchFill = "StretchFill"
+private let keyFitMode = "FitMode"
 private let keySplitMode = "SplitMode"
 private let keySplitRatio = "SplitRatio"
 private let keySplitRatio2 = "SplitRatio2"
@@ -74,6 +75,28 @@ private func currentRatio(_ key: String, _ fallback: Int) -> Int {
         return value
     }
     return fallback
+}
+
+private func currentFitMode() -> Int {
+    if let value = CFPreferencesCopyAppValue(keyFitMode as CFString, prefsDomain) as? Int, value >= 0 && value <= 2 {
+        return value
+    }
+    if let value = loadPrefs()[keyFitMode] as? Int, value >= 0 && value <= 2 {
+        return value
+    }
+    // Legacy fallback: StretchFill boolean.
+    if let value = CFPreferencesCopyAppValue(keyStretchFill as CFString, prefsDomain) as? Bool, value {
+        return 1
+    }
+    return 0
+}
+
+private func fitModeName() -> String {
+    switch currentFitMode() {
+    case 1: return "拉伸填满"
+    case 2: return "原生填充"
+    default: return "等比缩放"
+    }
 }
 
 private func ratioDescription() -> String {
@@ -324,6 +347,92 @@ class SplitModePickerController: PSListController {
 @objc(DashSplitSplitModePicker)
 final class DashSplitSplitModePicker: SplitModePickerController {}
 
+// Fit mode picker: choose aspect-fit, stretch fill, or native fill.
+private final class FitModeRowTarget: NSObject {
+    let mode: Int
+    weak var picker: FitModePickerController?
+
+    init(mode: Int, picker: FitModePickerController?) {
+        self.mode = mode
+        self.picker = picker
+    }
+
+    @objc func selectMode() {
+        setPref(mode, forKey: keyFitMode)
+        NSLog("[DashSplitPref] set FitMode = %d", mode)
+        if let nav = picker?.navigationController, nav.viewControllers.count >= 2,
+           let parent = nav.viewControllers[nav.viewControllers.count - 2] as? DashSplitPrefListController {
+            parent.refreshPane()
+        }
+        picker?.navigationController?.popViewController(animated: true)
+    }
+}
+
+class FitModePickerController: PSListController {
+    private var rowTargets: [FitModeRowTarget] = []
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "显示模式"
+    }
+
+    override var specifiers: NSMutableArray? {
+        get {
+            if let specifiers = value(forKey: "_specifiers") as? NSMutableArray {
+                return specifiers
+            }
+
+            let current = currentFitMode()
+            rowTargets = []
+
+            var specifiers = NSMutableArray()
+            specifiers.add(PSSpecifier.emptyGroup())
+
+            let modes: [(Int, String, String)] = [
+                (0, "等比缩放", "保持宽高比,等比缩小居中,两侧可能留白"),
+                (1, "拉伸填满", "强行拉伸填满整个区域,文字和图像会变形"),
+                (2, "原生填充", "通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常")
+            ]
+            for (mode, name, desc) in modes {
+                let title = mode == current ? "当前: \(name)" : name
+                let target = FitModeRowTarget(mode: mode, picker: self)
+                rowTargets.append(target)
+                let row = PSSpecifier.preferenceSpecifierNamed(
+                    title,
+                    target: target,
+                    set: nil,
+                    get: nil,
+                    detail: nil,
+                    cell: .buttonCell,
+                    edit: nil
+                )
+                row?.buttonAction = #selector(FitModeRowTarget.selectMode)
+                if let row = row { specifiers.add(row) }
+                // Add a non-interactive description row.
+                if let descRow = PSSpecifier.preferenceSpecifierNamed(
+                    desc,
+                    target: self,
+                    set: nil,
+                    get: nil,
+                    detail: nil,
+                    cell: .buttonCell,
+                    edit: nil
+                ) {
+                    descRow.buttonAction = #selector(FitModeRowTarget.selectMode)
+                    specifiers.add(descRow)
+                }
+            }
+
+            setValue(specifiers, forKey: "_specifiers")
+            return specifiers
+        }
+        set { super.specifiers = newValue }
+    }
+}
+
+@objc(DashSplitFitModePicker)
+final class DashSplitFitModePicker: FitModePickerController {}
+
 // Respring target: the "应用设置" button asks for confirmation, then
 // kills SpringBoard so all preference changes take effect immediately.
 private final class RespringTarget: NSObject {
@@ -490,10 +599,12 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "显示",
-                    footerText: "开启后 App 画面会拉伸填满整个分屏区域(不保持原始宽高比);关闭则等比缩小居中显示,两侧可能留有空白。更改后重新连接 CarPlay 生效。"
-                ),
-                ToggleCell(name: "拉伸填满", key: keyStretchFill, defaultValue: false)
+                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。更改后重启 SpringBoard 生效。"
+                )
             ], to: &specifiers, in: self)
+            if let fitRow = linkRow("显示模式:\(fitModeName())", detail: DashSplitFitModePicker.self) {
+                specifiers.add(fitRow)
+            }
 
             SpecifierFactory.add([
                 GroupCell(

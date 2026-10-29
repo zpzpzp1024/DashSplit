@@ -113,6 +113,8 @@ static NSString *const kPrefsHostApp3 = @"HostBundleID3";
 static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
 static NSString *const kPrefsStretchFill = @"StretchFill";
+// Fit mode: 0 = aspect-fit (default), 1 = stretch fill, 2 = native fill (hook UIScreen.bounds)
+static NSString *const kPrefsFitMode = @"FitMode";
 static NSString *const kPrefsSplitMode = @"SplitMode";
 // Split ratio: integer (1-5) for each pane's relative weight. 0 means
 // "default" — auto 1:2 in 2-split, 1:1:1 in 3-split, ignored in 1-split.
@@ -276,11 +278,18 @@ static BOOL TestModeEnabled(void)
     return PrefBool(kPrefsTestMain, NO);
 }
 
-// When ON, the app content is stretched (non-uniform scale) to fill the pane
-// completely; when OFF (default), it is aspect-fit (uniform scale, centered).
-static BOOL StretchFillEnabled(void)
+// Fit mode: 0 = aspect-fit (uniform scale, centered, default),
+//           1 = stretch fill (non-uniform scale, fills pane, deforms),
+//           2 = native fill (hook UIScreen.bounds so App re-layouts at pane size).
+// Legacy: StretchFill=true maps to 1, false maps to 0.
+static int FitMode(void)
 {
-    return PrefBool(kPrefsStretchFill, NO);
+    // Check new key first.
+    int mode = (int)PrefInteger(kPrefsFitMode, -1);
+    if (mode >= 0 && mode <= 2) return mode;
+    // Legacy fallback: StretchFill boolean.
+    if (PrefBool(kPrefsStretchFill, NO)) return 1;
+    return 0;
 }
 
 // Split mode: 1 = single app (no split), 2 = two-way split (default), 3 = three-way split.
@@ -990,6 +999,43 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
     CLog(@"host: displayMode 4 applied");
 }
 
+#pragma mark - UIScreen bounds hook (native fill mode)
+
+// When native fill mode is ON, hook [UIScreen bounds] so the hosted App
+// believes it is running on a screen the size of its pane. The App then
+// lays out its UI at that size — no transform deformation, no letterboxing.
+// The hook is always installed but only redirects when gNativeFillActive
+// is YES, so non-native modes are zero-cost (the original is called directly).
+static BOOL gNativeFillActive = NO;
+static CGSize gNativeFillSize = CGSizeZero;
+static IMP gOrigUIScreenBounds;
+
+static CGRect DashSplitUIScreenBounds(id self, SEL _cmd)
+{
+    if (gNativeFillActive && !CGSizeEqualToSize(gNativeFillSize, CGSizeZero)) {
+        return CGRectMake(0, 0, gNativeFillSize.width, gNativeFillSize.height);
+    }
+    return ((CGRect (*)(id, SEL))gOrigUIScreenBounds)(self, _cmd);
+}
+
+static void InstallUIScreenHook(void)
+{
+    static BOOL installed = NO;
+    if (installed) return;
+    installed = YES;
+
+    void *(*hookMessage)(Class, SEL, void *, void **) =
+        (void *(*)(Class, SEL, void *, void **))dlsym(RTLD_DEFAULT, "MSHookMessageEx");
+    Class screenClass = [UIScreen class];
+    SEL boundsSel = @selector(bounds);
+    if (hookMessage && screenClass && class_getInstanceMethod(screenClass, boundsSel)) {
+        hookMessage(screenClass, boundsSel, (void *)DashSplitUIScreenBounds, (void **)&gOrigUIScreenBounds);
+        CLog(@"native: UIScreen bounds hook installed");
+    } else {
+        CLog(@"native: UIScreen bounds hook FAILED (ms=%d class=%d)", hookMessage != NULL, screenClass != nil);
+    }
+}
+
 // Applies the aspect-fit transform that maps the app's phone-sized scene
 // content into its pane. Extracted from ScaleAppViewIntoContainer because it
 // must be RE-applied: the system resets this transform when the scene cycles
@@ -1024,9 +1070,25 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         return;
     }
     
-    BOOL stretch = StretchFillEnabled();
+    int fitMode = FitMode();
     
-    if (stretch) {
+    if (fitMode == 2) {
+        // Native fill: hook UIScreen.bounds to return the pane size so the
+        // App lays out its UI at that size — no transform deformation. The
+        // appView frame is set to the pane size (not phone size), and the
+        // content transform is identity.
+        gNativeFillSize = container.bounds.size;
+        gNativeFillActive = YES;
+
+        appView.frame = CGRectMake(0, 0, container.bounds.size.width, container.bounds.size.height);
+        contentView.transform = CGAffineTransformIdentity;
+        contentView.frame = container.bounds;
+        contentView.center = CGPointMake(container.bounds.size.width / 2.0,
+                                         container.bounds.size.height / 2.0);
+        CLog(@"fit: native fill pane=%@ hook=ON",
+             NSStringFromCGSize(container.bounds.size));
+    } else if (fitMode == 1) {
+        gNativeFillActive = NO;
         // Non-uniform stretch: scale X and Y independently so the app content
         // fills the entire pane with no letterboxing. The full app UI remains
         // visible (nothing is clipped), but the aspect ratio changes.
@@ -1038,6 +1100,7 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         CLog(@"fit: stretch scaleX=%.3f scaleY=%.3f pane=%@ phone=%@",
              scaleX, scaleY, NSStringFromCGSize(container.bounds.size), NSStringFromCGSize(phone));
     } else {
+        gNativeFillActive = NO;
         // Aspect-fit: uniform scale so the full app UI fits inside the pane,
         // centered with letterboxing on the axis that doesn't fill.
         CGFloat scale = MIN(container.bounds.size.width / MAX(phone.width, 1),
@@ -1053,11 +1116,18 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
 static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
 {
     if (!appView || !container) return;
-    CGSize phone = [UIScreen mainScreen].bounds.size;
+    int fitMode = FitMode();
+    CGSize initialSize;
+    if (fitMode == 2) {
+        // Native fill: the appView is sized to the pane, not the phone.
+        initialSize = container.bounds.size;
+    } else {
+        initialSize = [UIScreen mainScreen].bounds.size;
+    }
     appView.backgroundColor = [UIColor clearColor];
     appView.autoresizingMask = UIViewAutoresizingNone;
     [container addSubview:appView];
-    appView.frame = CGRectMake(0, 0, phone.width, phone.height);
+    appView.frame = CGRectMake(0, 0, initialSize.width, initialSize.height);
     [appView layoutIfNeeded];
     FitAppViewToContainer(appView, container);
     // The initial scene activation may re-layout after us; re-assert the fit
@@ -1307,6 +1377,9 @@ static void HidePanesAndStandDown(NSString *why)
 {
     int count = PaneCount();
     gUserClosed = YES;
+    // Disable the UIScreen bounds hook so the system and other apps get
+    // the real screen bounds while our panes are hidden.
+    gNativeFillActive = NO;
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) gPanes[index].hidden = YES;
     }
@@ -2032,6 +2105,7 @@ static void DashSplitInit(void)
                 CLog(@"init: one-time test-mode reset applied (default OFF)");
             }
             InstallSceneDiffHook();
+            InstallUIScreenHook();
             InstallLockStateObserver();
             LogPrefsState();
             LogHostingAPI();
