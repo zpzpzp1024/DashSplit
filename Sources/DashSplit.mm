@@ -1363,6 +1363,10 @@ static void TeardownSlot(HostSlot *slot)
 
 static void TeardownAllHosts(void)
 {
+    // Disable the UIScreen bounds hook BEFORE tearing down — the App's
+    // layout pass during invalidate may read [UIScreen bounds], and a
+    // stale hooked size corrupts the next interface's window creation.
+    gNativeFillActive = NO;
     // Teardown ALL slots (not just PaneCount()) — when switching from 3-split
     // to 2-split, slot[2] must be torn down even though PaneCount() is now 2.
     for (int i = 0; i < 3; i++) {
@@ -1375,6 +1379,9 @@ static void TeardownAllHosts(void)
     gAwaitingStart = NO;
     gPendingStart = NO;
     gPendingShow = 0;
+    // Re-assert after teardown: FitAppViewToContainer calls during invalidate
+    // may have re-enabled it.
+    gNativeFillActive = NO;
 }
 
 #pragma mark - UI
@@ -1783,6 +1790,13 @@ static void Layout(void)
 
 static UIWindow *MakeTestWindow(void)
 {
+    // Temporarily disable the UIScreen bounds hook while creating the test
+    // window — if a previous native-fill session left the hook active with
+    // a stale pane size, the new window would be created at that wrong size
+    // (observed: {552, 414} instead of {414, 896}).
+    BOOL wasHookActive = gNativeFillActive;
+    gNativeFillActive = NO;
+    
     // Full phone screen; CreateInterface adds a 90-rotated container on top
     // so the panes render in landscape orientation, matching the car display.
     // The user rotates the phone 90 clockwise to see the layout naturally.
@@ -1800,7 +1814,10 @@ static UIWindow *MakeTestWindow(void)
     }
     window.frame = frame;
     
-    CLog(@"test window: class=%@ frame=%@", NSStringFromClass([window class]), NSStringFromCGRect(frame));
+    // Restore the hook state if it was active.
+    gNativeFillActive = wasHookActive;
+    
+    CLog(@"test window: class=%@ frame=%@ hookWas=%d", NSStringFromClass([window class]), NSStringFromCGRect(frame), wasHookActive);
     return window;
 }
 
