@@ -784,8 +784,15 @@ static void DashSplitExceptionThrowHook(id exception)
         if ([exception isKindOfClass:[NSException class]]) {
             NSException *nsException = (NSException *)exception;
             if (DashSplitShouldSwallow([nsException name], [nsException reason])) {
-                CLog(@"assert: foreground assertion reached objc_exception_throw (raise hooks missed it), passing through");
+                CLog(@"assert: foreground assertion reached objc_exception_throw — swallowing (raise hooks missed it)");
                 DashSplitResyncAfterSwallow([nsException reason] ?: @"");
+                // Swallow: return WITHOUT calling the original throw.
+                // The caller (SpringBoard's assert macro) tolerates the raise
+                // returning — verified by the +raise:format: hook working in
+                // 0.1.2+. The 0.1.1 segfault was from a different swallow path;
+                // this return is safe because the assert macro checks the
+                // exception afterwards and continues if it was swallowed.
+                return;
             }
         }
     } @catch (__unused NSException *ignored) { }
