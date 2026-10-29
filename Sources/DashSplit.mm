@@ -112,6 +112,7 @@ static NSString *const kPrefsHostApp2 = @"HostBundleID2";
 static NSString *const kPrefsHostApp3 = @"HostBundleID3";
 static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
+static NSString *const kPrefsTestLandscape = @"TestLandscape";
 static NSString *const kPrefsStretchFill = @"StretchFill";
 // Fit mode: 0 = aspect-fit (default), 1 = stretch fill, 2 = native fill (hook UIScreen.bounds)
 static NSString *const kPrefsFitMode = @"FitMode";
@@ -1357,6 +1358,7 @@ static UIView *gPanes[3];
 static UIView *gDividers[2];  // up to 2 dividers for 3-pane split
 static UIView *gTestContainer;  // rotated container for landscape test preview
 static BOOL gTestMode;
+static BOOL gTestLandscape;  // tracks the TestLandscape pref of the active test interface
 static UIButton *gToggleButton;
 static int gCurrentPaneCount = 0;  // pane count of the currently active interface
 
@@ -1498,6 +1500,30 @@ static void RestoreNow(void)
 
 - (void)toggleTapped
 {
+    // In test mode the ✕ button closes the test entirely (writes the
+    // preference OFF and tears down the overlay) instead of just
+    // hide/toggle. The user explicitly wants to exit the preview.
+    if (gTestMode) {
+        CFPreferencesSetAppValue(CFSTR("TestOnMainScreen"),
+                                 kCFBooleanFalse,
+                                 CFSTR("lilliana.dashsplit"));
+        CFPreferencesAppSynchronize(CFSTR("lilliana.dashsplit"));
+        TeardownAllHosts();
+        gWindow.hidden = YES;
+        gWindow = nil;
+        int count = PaneCount();
+        for (int i = 0; i < count; i++) gPanes[i] = nil;
+        for (int i = 0; i < 2; i++) gDividers[i] = nil;
+        gTestContainer = nil;
+        gToggleButton = nil;
+        gCurrentPaneCount = 0;
+        gTestMode = NO;
+        gTestLandscape = NO;
+        gUserClosed = NO;
+        CLog(@"ui: test mode closed by user via ✕ button");
+        return;
+    }
+
     if (gAwaitingStart) {
         // 0.1.28: never enter Live while the phone is unlocked. The 19:10
         // session started hosting 8s after unlock and died 2s later — with
@@ -1773,31 +1799,39 @@ static void CreateInterface(BOOL testMode)
     window.backgroundColor = [UIColor clearColor];
     window.hidden = NO;
     
-    // In test mode, create a rotated container view that simulates a
-    // landscape car display. The container is sized to the portrait screen
-    // but its bounds are swapped (landscape dimensions), then rotated 90°
-    // clockwise and positioned to fill the screen. All panes/dividers/toggle
-    // are added to this container so Layout works in landscape coordinates.
+    // In test mode, optionally create a rotated container view that
+    // simulates a landscape car display. The container is sized to the
+    // portrait screen but its bounds are swapped (landscape dimensions),
+    // then rotated 90° clockwise and positioned to fill the screen. All
+    // panes/dividers/toggle are added to this container so Layout works
+    // in landscape coordinates. When TestLandscape is OFF, the container
+    // is not rotated and the test preview shows in portrait orientation.
     UIView *addTarget = window;  // default: add directly to window
     if (testMode) {
-        CGRect screenBounds = [UIScreen mainScreen].bounds;
-        CGFloat portraitW = screenBounds.size.width;
-        CGFloat portraitH = screenBounds.size.height;
-        // Container's internal coordinate system uses landscape dimensions.
-        CGFloat landW = portraitH;
-        CGFloat landH = portraitW;
-        gTestContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, portraitW, portraitH)];
-        gTestContainer.bounds = CGRectMake(0, 0, landW, landH);
-        gTestContainer.center = CGPointMake(portraitW / 2.0, portraitH / 2.0);
-        gTestContainer.transform = CGAffineTransformMakeRotation(M_PI_2);  // 90° clockwise
-        gTestContainer.userInteractionEnabled = YES;
-        gTestContainer.clipsToBounds = NO;
-        [window addSubview:gTestContainer];
-        addTarget = gTestContainer;
-        CLog(@"test: rotated container frame=%@ bounds=%@ center=%@",
-             NSStringFromCGRect(gTestContainer.frame),
-             NSStringFromCGRect(gTestContainer.bounds),
-             NSStringFromCGPoint(gTestContainer.center));
+        BOOL useLandscape = PrefBool(kPrefsTestLandscape, YES);
+        gTestLandscape = useLandscape;
+        if (useLandscape) {
+            CGRect screenBounds = [UIScreen mainScreen].bounds;
+            CGFloat portraitW = screenBounds.size.width;
+            CGFloat portraitH = screenBounds.size.height;
+            // Container's internal coordinate system uses landscape dimensions.
+            CGFloat landW = portraitH;
+            CGFloat landH = portraitW;
+            gTestContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, portraitW, portraitH)];
+            gTestContainer.bounds = CGRectMake(0, 0, landW, landH);
+            gTestContainer.center = CGPointMake(portraitW / 2.0, portraitH / 2.0);
+            gTestContainer.transform = CGAffineTransformMakeRotation(M_PI_2);  // 90° clockwise
+            gTestContainer.userInteractionEnabled = YES;
+            gTestContainer.clipsToBounds = NO;
+            [window addSubview:gTestContainer];
+            addTarget = gTestContainer;
+            CLog(@"test: rotated container frame=%@ bounds=%@ center=%@",
+                 NSStringFromCGRect(gTestContainer.frame),
+                 NSStringFromCGRect(gTestContainer.bounds),
+                 NSStringFromCGPoint(gTestContainer.center));
+        } else {
+            CLog(@"test: portrait mode (no rotation)");
+        }
     }
     
     // Create panes with blue translucent background.
@@ -1989,6 +2023,7 @@ static void Tick(void)
                 gToggleButton = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
+                gTestLandscape = NO;
                 CLog(@"lifecycle: car display gone, torn down for a clean reconnect");
             }
             return;
@@ -2007,12 +2042,28 @@ static void Tick(void)
                 gToggleButton = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
+                gTestLandscape = NO;
                 CLog(@"lifecycle: car display found, rebuilding there");
             } else if (gCurrentPaneCount != PaneCount()) {
                 // Split mode changed (2<->3): tear down everything and rebuild
                 // so the new pane count and layout take effect.
                 CLog(@"lifecycle: split mode changed %d->%d, rebuilding", gCurrentPaneCount, PaneCount());
                 gAutoStartOnCreate = YES;   // interface was already started; rebuild hosts at once
+                TeardownAllHosts();
+                gWindow.hidden = YES;
+                gWindow = nil;
+                for (int i = 0; i < 3; i++) gPanes[i] = nil;
+                for (int i = 0; i < 2; i++) gDividers[i] = nil;
+                gTestContainer = nil;
+                gToggleButton = nil;
+                gCurrentPaneCount = 0;
+                // Fall through to CreateInterface below.
+            } else if (gTestMode && gTestLandscape != PrefBool(kPrefsTestLandscape, YES)) {
+                // Test orientation (横屏/竖屏) changed: rebuild so the
+                // container rotation matches the new preference.
+                CLog(@"lifecycle: test orientation changed %d->%d, rebuilding",
+                     gTestLandscape, PrefBool(kPrefsTestLandscape, YES));
+                gAutoStartOnCreate = YES;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;

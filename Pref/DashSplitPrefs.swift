@@ -17,6 +17,7 @@ private let keyRight = "HostBundleID2"
 private let keyThird = "HostBundleID3"
 private let keyStretchFill = "StretchFill"
 private let keyFitMode = "FitMode"
+private let keyTestLandscape = "TestLandscape"
 private let keySplitMode = "SplitMode"
 private let keySplitRatio = "SplitRatio"
 private let keySplitRatio2 = "SplitRatio2"
@@ -75,6 +76,16 @@ private func currentRatio(_ key: String, _ fallback: Int) -> Int {
         return value
     }
     return fallback
+}
+
+private func boolPref(_ key: String, defaultValue: Bool) -> Bool {
+    if let value = CFPreferencesCopyAppValue(key as CFString, prefsDomain) as? Bool {
+        return value
+    }
+    if let value = loadPrefs()[key] as? Bool {
+        return value
+    }
+    return defaultValue
 }
 
 private func currentFitMode() -> Int {
@@ -388,13 +399,13 @@ class FitModePickerController: PSListController {
             var specifiers = NSMutableArray()
             specifiers.add(PSSpecifier.emptyGroup())
 
-            let modes: [(Int, String, String)] = [
-                (0, "等比缩放", "保持宽高比,等比缩小居中,两侧可能留白"),
-                (1, "拉伸填满", "强行拉伸填满整个区域,文字和图像会变形"),
-                (2, "原生填充", "通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常")
+            let modes: [(Int, String)] = [
+                (0, "等比缩放"),
+                (1, "拉伸填满"),
+                (2, "原生填充")
             ]
-            for (mode, name, desc) in modes {
-                let title = mode == current ? "当前: \(name)" : name
+            for (mode, name) in modes {
+                let title = mode == current ? "✓ \(name)" : name
                 let target = FitModeRowTarget(mode: mode, picker: self)
                 rowTargets.append(target)
                 let row = PSSpecifier.preferenceSpecifierNamed(
@@ -408,19 +419,6 @@ class FitModePickerController: PSListController {
                 )
                 row?.buttonAction = #selector(FitModeRowTarget.selectMode)
                 if let row = row { specifiers.add(row) }
-                // Add a non-interactive description row.
-                if let descRow = PSSpecifier.preferenceSpecifierNamed(
-                    desc,
-                    target: self,
-                    set: nil,
-                    get: nil,
-                    detail: nil,
-                    cell: .buttonCell,
-                    edit: nil
-                ) {
-                    descRow.buttonAction = #selector(FitModeRowTarget.selectMode)
-                    specifiers.add(descRow)
-                }
             }
 
             setValue(specifiers, forKey: "_specifiers")
@@ -432,6 +430,83 @@ class FitModePickerController: PSListController {
 
 @objc(DashSplitFitModePicker)
 final class DashSplitFitModePicker: FitModePickerController {}
+
+// MARK: - Test orientation (横屏/竖屏预览)
+
+func currentTestLandscape() -> Bool {
+    return boolPref(keyTestLandscape, defaultValue: true)
+}
+
+private final class TestOrientRowTarget: NSObject {
+    let landscape: Bool
+    weak var picker: TestOrientPickerController?
+
+    init(landscape: Bool, picker: TestOrientPickerController?) {
+        self.landscape = landscape
+        self.picker = picker
+    }
+
+    @objc func selectOrient() {
+        setPref(landscape, forKey: keyTestLandscape)
+        NSLog("[DashSplitPref] set TestLandscape = %d", landscape ? 1 : 0)
+        if let nav = picker?.navigationController, nav.viewControllers.count >= 2,
+           let parent = nav.viewControllers[nav.viewControllers.count - 2] as? DashSplitPrefListController {
+            parent.refreshPane()
+        }
+        picker?.navigationController?.popViewController(animated: true)
+    }
+}
+
+class TestOrientPickerController: PSListController {
+    private var rowTargets: [TestOrientRowTarget] = []
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "预览方向"
+    }
+
+    override var specifiers: NSMutableArray? {
+        get {
+            if let specifiers = value(forKey: "_specifiers") as? NSMutableArray {
+                return specifiers
+            }
+
+            let current = currentTestLandscape()
+            rowTargets = []
+
+            var specifiers = NSMutableArray()
+            specifiers.add(PSSpecifier.emptyGroup())
+
+            let options: [(Bool, String)] = [
+                (true, "横屏预览"),
+                (false, "竖屏预览")
+            ]
+            for (land, name) in options {
+                let title = land == current ? "✓ \(name)" : name
+                let target = TestOrientRowTarget(landscape: land, picker: self)
+                rowTargets.append(target)
+                let row = PSSpecifier.preferenceSpecifierNamed(
+                    title,
+                    target: target,
+                    set: nil,
+                    get: nil,
+                    detail: nil,
+                    cell: .buttonCell,
+                    edit: nil
+                )
+                row?.buttonAction = #selector(TestOrientRowTarget.selectOrient)
+                if let row = row { specifiers.add(row) }
+            }
+
+            setValue(specifiers, forKey: "_specifiers")
+            return specifiers
+        }
+        set { super.specifiers = newValue }
+    }
+}
+
+@objc(DashSplitTestOrientPicker)
+final class DashSplitTestOrientPicker: TestOrientPickerController {}
 
 // Respring target: the "应用设置" button asks for confirmation, then
 // kills SpringBoard so all preference changes take effect immediately.
@@ -535,7 +610,7 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "通用",
-                    footerText: "启用后,连接 CarPlay 时会在车机屏幕上左右分屏显示下面选择的两个 App。"
+                    footerText: "启用后,连接 CarPlay 时会在车机屏幕上左右分屏显示下面选择的 App。"
                 ),
                 ToggleCell(name: "启用分屏", key: keyEnabled, defaultValue: true)
             ], to: &specifiers, in: self)
@@ -551,35 +626,27 @@ final class DashSplitPrefListController: PSListController {
                 specifiers.add(modeRow)
             }
 
+            // 分屏应用 + 分屏比例 + 应用设置 合并为一组
             SpecifierFactory.add([
                 GroupCell(
-                    name: "分屏应用",
-                    footerText: "点进去选择 App;更改后重新连接 CarPlay 生效;同一个 App 只投第一个出现的区域。"
+                    name: "分屏应用与比例",
+                    footerText: "点进去选择 App;拖动滑块设置每屏占比(1-5);2分屏只需设第1屏,第2屏自动取剩余;3分屏可分别设3个屏;不设则用默认(2分屏1:2,3分屏1:1:1);1分屏无需设置。更改后重启 SpringBoard 生效;同一个 App 只投第一个出现的区域。"
                 )
             ], to: &specifiers, in: self)
             if let left = paneRow("第1屏应用", current: currentSelection(keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
                 specifiers.add(left)
             }
-            // Hide pane 2/3 pickers in 1-split mode.
             if currentSplitMode() >= 2 {
                 if let right = paneRow("第2屏应用", current: currentSelection(keyRight, defaultRight), detail: DashSplitRightAppPicker.self) {
                     specifiers.add(right)
                 }
             }
-            // Only show the third pane picker in 3-split mode.
             if currentSplitMode() == 3 {
                 if let third = paneRow("第3屏应用", current: currentSelection(keyThird, defaultThird), detail: DashSplitThirdAppPicker.self) {
                     specifiers.add(third)
                 }
             }
-
-            SpecifierFactory.add([
-                GroupCell(
-                    name: "分屏比例",
-                    footerText: "拖动滑块设置每屏占比(1-5)。2分屏只需设第1屏,第2屏自动取剩余;3分屏可分别设3个屏。不设则用默认(2分屏1:2,3分屏1:1:1)。1分屏无需设置。更改后重启 SpringBoard 生效。"
-                )
-            ], to: &specifiers, in: self)
-            // Hide ratio sliders in 1-split mode.
+            // Ratio sliders (hide in 1-split mode).
             if currentSplitMode() >= 2 {
                 SpecifierFactory.add([
                     SliderCell(name: "第1屏占比", key: keySplitRatio, defaultValue: 0, range: 1..<6)
@@ -596,32 +663,27 @@ final class DashSplitPrefListController: PSListController {
                 }
             }
 
+            // 显示模式 + 测试 合并为一组
             SpecifierFactory.add([
                 GroupCell(
-                    name: "显示",
-                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。更改后重启 SpringBoard 生效。"
+                    name: "显示与测试",
+                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。测试模式不连 CarPlay 直接预览。更改后重启 SpringBoard 生效。"
                 )
             ], to: &specifiers, in: self)
             if let fitRow = linkRow("显示模式:\(fitModeName())", detail: DashSplitFitModePicker.self) {
                 specifiers.add(fitRow)
             }
-
+            // 横屏/竖屏预览测试选项
+            let testOrient = currentTestLandscape() ? "横屏预览" : "竖屏预览"
+            if let orientRow = linkRow("预览方向:\(testOrient)", detail: DashSplitTestOrientPicker.self) {
+                specifiers.add(orientRow)
+            }
             SpecifierFactory.add([
-                GroupCell(
-                    name: "测试",
-                    footerText: "不连 CarPlay,在手机屏幕上模拟车机横屏布局预览。开启后将手机顺时针旋转90度即可看到左右分屏效果。开启后几秒内出现,关闭后几秒内消失。"
-                ),
                 ToggleCell(name: "手机测试模式", key: "TestOnMainScreen", defaultValue: false)
             ], to: &specifiers, in: self)
 
             // Respring button — applies all changes immediately.
             respringTarget = RespringTarget(controller: self)
-            SpecifierFactory.add([
-                GroupCell(
-                    name: "应用",
-                    footerText: "更改以上设置后,点击下方按钮重启 SpringBoard 以立即生效。"
-                )
-            ], to: &specifiers, in: self)
             if let btn = PSSpecifier.preferenceSpecifierNamed(
                 "应用设置",
                 target: respringTarget!,
