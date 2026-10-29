@@ -114,6 +114,11 @@ static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
 static NSString *const kPrefsStretchFill = @"StretchFill";
 static NSString *const kPrefsSplitMode = @"SplitMode";
+// Split ratio: integer percent (1-99) for the first pane's share of the usable
+// width. 0 means "default" — auto 1:2 in 2-split, equal in 3-split.
+static NSString *const kPrefsSplitRatio = @"SplitRatio";
+static NSString *const kPrefsSplitRatio2 = @"SplitRatio2"; // 3-split: pane2 share
+static NSString *const kPrefsSplitRatio3 = @"SplitRatio3"; // 3-split: pane3 share
 
 // Uninstallable system apps: the defaults must exist on every device.
 static NSString *const kDefaultHost1 = @"com.apple.mobiletimer";   // 时钟
@@ -283,6 +288,40 @@ static int SplitMode(void)
 {
     int mode = (int)PrefInteger(kPrefsSplitMode, 2);
     return (mode == 3) ? 3 : 2;
+}
+
+// Split ratios: each pane's relative weight. Defaults are 0 (meaning
+// "use built-in defaults": 1:2 in 2-split, 1:1:1 in 3-split). The values
+// are integers 1-99 representing relative proportions; the Layout function
+// normalises them to actual pixel widths.
+static void SplitRatios(int count, int ratios[3])
+{
+    int r1 = (int)PrefInteger(kPrefsSplitRatio, 0);
+    int r2 = (int)PrefInteger(kPrefsSplitRatio2, 0);
+    int r3 = (int)PrefInteger(kPrefsSplitRatio3, 0);
+
+    if (count == 2) {
+        // 2-split: use r1 for pane1, r2 (if set) for pane2. If r2 is 0 but
+        // r1 is set, pane2 gets the remainder (100-r1). If both 0, default 1:2.
+        if (r1 > 0) {
+            ratios[0] = r1;
+            ratios[1] = (r2 > 0) ? r2 : (100 - r1);
+        } else {
+            ratios[0] = 1;  // default 1:2
+            ratios[1] = 2;
+        }
+    } else {
+        // 3-split: if all three set use them; if none set, equal (1:1:1).
+        if (r1 > 0 || r2 > 0 || r3 > 0) {
+            ratios[0] = r1 > 0 ? r1 : 1;
+            ratios[1] = r2 > 0 ? r2 : 1;
+            ratios[2] = r3 > 0 ? r3 : 1;
+        } else {
+            ratios[0] = 1;
+            ratios[1] = 1;
+            ratios[2] = 1;
+        }
+    }
 }
 
 static int PaneCount(void)
@@ -1519,38 +1558,48 @@ static void Layout(void)
     CGRect bounds = gWindow.bounds;
     int count = PaneCount();
     
-    if (gTestMode) {
-        // Phone test mode: portrait screen, evenly split top-to-bottom.
-        CGFloat paneHeight = floor(bounds.size.height / count);
-        for (int index = 0; index < count; index++) {
-            if (gPanes[index]) {
-                gPanes[index].frame = CGRectMake(0, paneHeight * index,
-                                                 bounds.size.width, paneHeight);
-            }
+    // Both test mode and car mode use the same horizontal split logic:
+    // leave the leftmost strip for a system sidebar, then split the remaining
+    // width into N columns based on user-configurable ratios.
+    //
+    // Test mode simulates a landscape car display by computing a sideMargin
+    // proportional to the screen, giving the same visual layout as the car.
+    CGFloat sideMargin = floor(bounds.size.width / 13.0);
+    CGFloat usable = bounds.size.width - sideMargin;
+
+    // Get user-configured split ratios (falls back to defaults when unset).
+    int ratios[3] = {0};
+    SplitRatios(count, ratios);
+
+    // Normalise ratios to pixel widths. The last pane absorbs any rounding
+    // remainder so the panes fill the full usable width without gaps.
+    CGFloat origins[3];
+    CGFloat widths[3];
+    int totalRatio = 0;
+    for (int i = 0; i < count; i++) totalRatio += ratios[i];
+
+    CGFloat accumulated = 0;
+    for (int i = 0; i < count; i++) {
+        origins[i] = accumulated;
+        if (i < count - 1) {
+            CGFloat w = floor(usable * ratios[i] / totalRatio);
+            widths[i] = w;
+            accumulated += w;
+        } else {
+            // Last pane: take everything that's left.
+            widths[i] = usable - accumulated;
         }
-        // Divider lines between each pair of adjacent panes.
-        for (int i = 0; i < count - 1 && i < 2; i++) {
-            if (gDividers[i]) {
-                gDividers[i].frame = CGRectMake(0, paneHeight * (i + 1) - 1, bounds.size.width, 2);
-            }
+    }
+
+    for (int index = 0; index < count; index++) {
+        if (gPanes[index]) {
+            gPanes[index].frame = CGRectMake(sideMargin + origins[index], 0,
+                                              widths[index], bounds.size.height);
         }
-    } else {
-        // Car mode: leave the leftmost strip for the system sidebar, then
-        // evenly split the remaining width into N columns.
-        CGFloat sideMargin = floor(bounds.size.width / 13.0);
-        CGFloat usable = bounds.size.width - sideMargin;
-        CGFloat paneWidth = floor(usable / count);
-        
-        for (int index = 0; index < count; index++) {
-            if (gPanes[index]) {
-                gPanes[index].frame = CGRectMake(sideMargin + paneWidth * index, 0,
-                                                  paneWidth, bounds.size.height);
-            }
-        }
-        for (int i = 0; i < count - 1 && i < 2; i++) {
-            if (gDividers[i]) {
-                gDividers[i].frame = CGRectMake(sideMargin + paneWidth * (i + 1), 0, 2, bounds.size.height);
-            }
+    }
+    for (int i = 0; i < count - 1 && i < 2; i++) {
+        if (gDividers[i]) {
+            gDividers[i].frame = CGRectMake(sideMargin + origins[i] + widths[i], 0, 2, bounds.size.height);
         }
     }
     
@@ -1585,8 +1634,9 @@ static void Layout(void)
 
 static UIWindow *MakeTestWindow(void)
 {
-    // Full phone screen: the test overlay splits it top(60%)/bottom(40%),
-    // mirroring the car's left/right ratio so both panes are testable.
+    // Full phone screen used as a landscape-style car preview: the Layout
+    // function applies the same sideMargin + horizontal split as car mode,
+    // so the test overlay mirrors the car's pane arrangement on the phone.
     CGRect frame = [UIScreen mainScreen].bounds;
     
     UIWindow *window = nil;

@@ -17,6 +17,12 @@ private let keyRight = "HostBundleID2"
 private let keyThird = "HostBundleID3"
 private let keyStretchFill = "StretchFill"
 private let keySplitMode = "SplitMode"
+private let keySplitRatio = "SplitRatio"
+private let keySplitRatio2 = "SplitRatio2"
+private let keySplitRatio3 = "SplitRatio3"
+
+// Tweak version shown in the settings pane.
+private let tweakVersion = "0.1.28"
 
 // Uninstallable system apps: the defaults must exist on every device.
 private let defaultLeft = "com.apple.mobiletimer"   // 时钟
@@ -54,6 +60,39 @@ private func currentSplitMode() -> Int {
         return value == 3 ? 3 : 2
     }
     return 2
+}
+
+private func currentRatio(_ key: String, _ fallback: Int) -> Int {
+    if let value = CFPreferencesCopyAppValue(key as CFString, prefsDomain) as? Int, value > 0 {
+        return value
+    }
+    if let value = loadPrefs()[key] as? Int, value > 0 {
+        return value
+    }
+    return fallback
+}
+
+private func ratioDescription() -> String {
+    let mode = currentSplitMode()
+    if mode == 2 {
+        let r1 = currentRatio(keySplitRatio, 0)
+        if r1 > 0 {
+            let r2 = currentRatio(keySplitRatio2, 0)
+            if r2 > 0 {
+                return "\(r1):\(r2)"
+            }
+            return "\(r1):\(100 - r1)"
+        }
+        return "1:2 (默认)"
+    } else {
+        let r1 = currentRatio(keySplitRatio, 0)
+        let r2 = currentRatio(keySplitRatio2, 0)
+        let r3 = currentRatio(keySplitRatio3, 0)
+        if r1 > 0 || r2 > 0 || r3 > 0 {
+            return "\(r1 > 0 ? r1 : 1):\(r2 > 0 ? r2 : 1):\(r3 > 0 ? r3 : 1)"
+        }
+        return "1:1:1 (默认)"
+    }
 }
 
 private func appName(for bundleID: String, apps: [[String: String]]) -> String {
@@ -411,6 +450,24 @@ final class DashSplitPrefListController: PSListController {
 
             SpecifierFactory.add([
                 GroupCell(
+                    name: "分屏比例",
+                    footerText: "拖动滑块设置每屏占比(1-99)。2分屏只需设第1屏,第2屏自动取剩余;3分屏可分别设3个屏。不设则用默认(2分屏1:2,3分屏1:1:1)。更改后重启 SpringBoard 生效。"
+                ),
+                SliderCell(name: "第1屏占比", key: keySplitRatio, defaultValue: 0, range: 1..<100)
+            ], to: &specifiers, in: self)
+            if currentSplitMode() == 3 {
+                SpecifierFactory.add([
+                    SliderCell(name: "第2屏占比", key: keySplitRatio2, defaultValue: 0, range: 1..<100),
+                    SliderCell(name: "第3屏占比", key: keySplitRatio3, defaultValue: 0, range: 1..<100)
+                ], to: &specifiers, in: self)
+            } else {
+                SpecifierFactory.add([
+                    SliderCell(name: "第2屏占比", key: keySplitRatio2, defaultValue: 0, range: 1..<100)
+                ], to: &specifiers, in: self)
+            }
+
+            SpecifierFactory.add([
+                GroupCell(
                     name: "显示",
                     footerText: "开启后 App 画面会拉伸填满整个分屏区域(不保持原始宽高比);关闭则等比缩小居中显示,两侧可能留有空白。更改后重新连接 CarPlay 生效。"
                 ),
@@ -420,7 +477,7 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "测试",
-                    footerText: "不连 CarPlay,直接在手机屏幕上分屏预览:上 60% 为左屏应用,下 40% 为右屏应用。开启后几秒内出现,关闭后几秒内消失。"
+                    footerText: "不连 CarPlay,直接在手机屏幕上模拟车机横屏布局预览。开启后几秒内出现,关闭后几秒内消失。"
                 ),
                 ToggleCell(name: "手机测试模式", key: "TestOnMainScreen", defaultValue: false)
             ], to: &specifiers, in: self)
@@ -444,6 +501,25 @@ final class DashSplitPrefListController: PSListController {
             ) {
                 btn.buttonAction = #selector(RespringTarget.respringTapped)
                 specifiers.add(btn)
+            }
+
+            // Version display at the bottom.
+            SpecifierFactory.add([
+                GroupCell(
+                    name: "关于",
+                    footerText: "DashSplit \(tweakVersion) — 当前分屏比例 \(ratioDescription())"
+                )
+            ], to: &specifiers, in: self)
+            if let versionRow = PSSpecifier.preferenceSpecifierNamed(
+                "版本:\(tweakVersion)",
+                target: self,
+                set: nil,
+                get: nil,
+                detail: nil,
+                cell: .linkCell,
+                edit: nil
+            ) {
+                specifiers.add(versionRow)
             }
 
             setValue(specifiers, forKey: "_specifiers")
