@@ -1668,7 +1668,9 @@ static void Layout(void)
     // clockwise to simulate a landscape car display on the portrait phone.
     // The container's bounds are swapped (width=screen height, height=screen
     // width), so Layout uses those as the effective landscape dimensions.
-    UIView *host = gTestMode ? gTestContainer : gWindow;
+    // In portrait test mode gTestContainer is nil — panes are added directly
+    // to the window, so we use the window bounds instead.
+    UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
     CGRect bounds = host.bounds;
     
     // Both test mode and car mode use the same horizontal split logic:
@@ -1719,7 +1721,7 @@ static void Layout(void)
     // Toggle button sits at the very top-left corner of the WHOLE display
     // (window coordinates), not the left pane, so it never covers hosted
     // content. In test mode it lives inside the rotated container too.
-    UIView *toggleHost = gTestMode ? gTestContainer : gWindow;
+    UIView *toggleHost = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
     if (gToggleButton) {
         gToggleButton.frame = CGRectMake(8, 8, 48, 48);
         [toggleHost bringSubviewToFront:gToggleButton];
