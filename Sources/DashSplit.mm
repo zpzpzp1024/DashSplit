@@ -1285,6 +1285,7 @@ static void TeardownAllHosts(void)
 static UIWindow *gWindow;
 static UIView *gPanes[3];
 static UIView *gDividers[2];  // up to 2 dividers for 3-pane split
+static UIView *gTestContainer;  // rotated container for landscape test preview
 static BOOL gTestMode;
 static UIButton *gToggleButton;
 static int gCurrentPaneCount = 0;  // pane count of the currently active interface
@@ -1562,8 +1563,14 @@ static void Layout(void)
 {
     if (!gWindow) return;
     
-    CGRect bounds = gWindow.bounds;
     int count = PaneCount();
+    
+    // In test mode the panes live inside gTestContainer which is rotated 90°
+    // clockwise to simulate a landscape car display on the portrait phone.
+    // The container's bounds are swapped (width=screen height, height=screen
+    // width), so Layout uses those as the effective landscape dimensions.
+    UIView *host = gTestMode ? gTestContainer : gWindow;
+    CGRect bounds = host.bounds;
     
     // Both test mode and car mode use the same horizontal split logic:
     // leave the leftmost strip for a system sidebar, then split the remaining
@@ -1610,13 +1617,13 @@ static void Layout(void)
         }
     }
     
-    // Toggle button sits at the very top-left corner of the WHOLE car display
+    // Toggle button sits at the very top-left corner of the WHOLE display
     // (window coordinates), not the left pane, so it never covers hosted
-    // content. It lives INSIDE gWindow: a second UIWindow on the car display
-    // never received taps (0.0.20/0.0.21 logs show zero toggleTapped calls).
+    // content. In test mode it lives inside the rotated container too.
+    UIView *toggleHost = gTestMode ? gTestContainer : gWindow;
     if (gToggleButton) {
         gToggleButton.frame = CGRectMake(8, 8, 48, 48);
-        [gWindow bringSubviewToFront:gToggleButton];
+        [toggleHost bringSubviewToFront:gToggleButton];
     }
 }
 
@@ -1641,9 +1648,9 @@ static void Layout(void)
 
 static UIWindow *MakeTestWindow(void)
 {
-    // Full phone screen used as a landscape-style car preview: the Layout
-    // function applies the same sideMargin + horizontal split as car mode,
-    // so the test overlay mirrors the car's pane arrangement on the phone.
+    // Full phone screen; CreateInterface adds a 90-rotated container on top
+    // so the panes render in landscape orientation, matching the car display.
+    // The user rotates the phone 90 clockwise to see the layout naturally.
     CGRect frame = [UIScreen mainScreen].bounds;
     
     UIWindow *window = nil;
@@ -1693,13 +1700,40 @@ static void CreateInterface(BOOL testMode)
     window.backgroundColor = [UIColor clearColor];
     window.hidden = NO;
     
+    // In test mode, create a rotated container view that simulates a
+    // landscape car display. The container is sized to the portrait screen
+    // but its bounds are swapped (landscape dimensions), then rotated 90°
+    // clockwise and positioned to fill the screen. All panes/dividers/toggle
+    // are added to this container so Layout works in landscape coordinates.
+    UIView *addTarget = window;  // default: add directly to window
+    if (testMode) {
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
+        CGFloat portraitW = screenBounds.size.width;
+        CGFloat portraitH = screenBounds.size.height;
+        // Container's internal coordinate system uses landscape dimensions.
+        CGFloat landW = portraitH;
+        CGFloat landH = portraitW;
+        gTestContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, portraitW, portraitH)];
+        gTestContainer.bounds = CGRectMake(0, 0, landW, landH);
+        gTestContainer.center = CGPointMake(portraitW / 2.0, portraitH / 2.0);
+        gTestContainer.transform = CGAffineTransformMakeRotation(M_PI_2);  // 90° clockwise
+        gTestContainer.userInteractionEnabled = YES;
+        gTestContainer.clipsToBounds = NO;
+        [window addSubview:gTestContainer];
+        addTarget = gTestContainer;
+        CLog(@"test: rotated container frame=%@ bounds=%@ center=%@",
+             NSStringFromCGRect(gTestContainer.frame),
+             NSStringFromCGRect(gTestContainer.bounds),
+             NSStringFromCGPoint(gTestContainer.center));
+    }
+    
     // Create panes with blue translucent background.
     UIColor *paneColor = [UIColor colorWithRed:0.05 green:0.20 blue:0.55 alpha:0.55];
     NSArray *paneTitles = @[@"DashSplit 探针\n第1屏", @"DashSplit 探针\n第2屏", @"DashSplit 探针\n第3屏"];
     for (int index = 0; index < count; index++) {
         NSString *title = index < paneTitles.count ? paneTitles[index] : [NSString stringWithFormat:@"DashSplit 探针\n屏%d", index];
         gPanes[index] = MakePane(title, paneColor);
-        [window addSubview:gPanes[index]];
+        [addTarget addSubview:gPanes[index]];
     }
     
     // Create divider lines (one per gap between adjacent panes).
@@ -1707,7 +1741,7 @@ static void CreateInterface(BOOL testMode)
         gDividers[i] = [[UIView alloc] initWithFrame:CGRectZero];
         gDividers[i].backgroundColor = [UIColor whiteColor];
         gDividers[i].userInteractionEnabled = NO;
-        [window addSubview:gDividers[i]];
+        [addTarget addSubview:gDividers[i]];
     }
     
     // Toggle button — always visible, lets user hide/show the panes.
@@ -1730,7 +1764,7 @@ static void CreateInterface(BOOL testMode)
     toggle.layer.zPosition = 9999;
     [toggle addTarget:gControl action:@selector(toggleTapped) forControlEvents:UIControlEventTouchUpInside];
 
-    [window addSubview:toggle];
+    [addTarget addSubview:toggle];
     gWindow = window;
     gToggleButton = toggle;
     
@@ -1878,6 +1912,7 @@ static void Tick(void)
                 gWindow = nil;
                 for (int i = 0; i < 3; i++) gPanes[i] = nil;
                 for (int i = 0; i < 2; i++) gDividers[i] = nil;
+                gTestContainer = nil;
                 gToggleButton = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
@@ -1895,6 +1930,7 @@ static void Tick(void)
                 int count = PaneCount();
                 for (int i = 0; i < count; i++) gPanes[i] = nil;
                 for (int i = 0; i < 2; i++) gDividers[i] = nil;
+                gTestContainer = nil;
                 gToggleButton = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
@@ -1909,6 +1945,7 @@ static void Tick(void)
                 gWindow = nil;
                 for (int i = 0; i < 3; i++) gPanes[i] = nil;
                 for (int i = 0; i < 2; i++) gDividers[i] = nil;
+                gTestContainer = nil;
                 gToggleButton = nil;
                 gCurrentPaneCount = 0;
                 // Fall through to CreateInterface below.

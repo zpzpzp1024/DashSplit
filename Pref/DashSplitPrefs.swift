@@ -498,7 +498,7 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "测试",
-                    footerText: "不连 CarPlay,直接在手机屏幕上模拟车机横屏布局预览。开启后几秒内出现,关闭后几秒内消失。"
+                    footerText: "不连 CarPlay,在手机屏幕上模拟车机横屏布局预览。开启后将手机顺时针旋转90度即可看到左右分屏效果。开启后几秒内出现,关闭后几秒内消失。"
                 ),
                 ToggleCell(name: "手机测试模式", key: "TestOnMainScreen", defaultValue: false)
             ], to: &specifiers, in: self)
