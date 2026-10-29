@@ -1015,23 +1015,27 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
 // The hook is always installed but only redirects when gNativeFillActive
 // is YES, so non-native modes are zero-cost (the original is called directly).
 static BOOL gNativeFillActive = NO;
-static CGSize gNativeFillSize = CGSizeZero;
+static CGSize gNativeFillSizes[3] = {CGSizeZero, CGSizeZero, CGSizeZero};  // per-pane sizes
+static int gNativeFillCurrentPane = -1;  // which pane is currently being fitted
 static IMP gOrigUIScreenBounds;
 
 static CGRect DashSplitUIScreenBounds(id self, SEL _cmd)
 {
-    if (gNativeFillActive && !CGSizeEqualToSize(gNativeFillSize, CGSizeZero)) {
-        CGRect hooked = CGRectMake(0, 0, gNativeFillSize.width, gNativeFillSize.height);
-        // Log the first 50 calls per activation to see who reads bounds
-        // and what they get — helps diagnose layout issues.
-        static int sLogCount = 0;
-        if (sLogCount < 50) {
-            sLogCount++;
-            CLog(@"native: [UIScreen bounds] hooked -> %@ (caller self=%@)",
-                 NSStringFromCGRect(hooked),
-                 NSStringFromClass([self class]));
+    if (gNativeFillActive && gNativeFillCurrentPane >= 0 && gNativeFillCurrentPane < 3) {
+        CGSize sz = gNativeFillSizes[gNativeFillCurrentPane];
+        if (!CGSizeEqualToSize(sz, CGSizeZero)) {
+            CGRect hooked = CGRectMake(0, 0, sz.width, sz.height);
+            // Log the first 50 calls per activation to see who reads bounds
+            // and what they get — helps diagnose layout issues.
+            static int sLogCount = 0;
+            if (sLogCount < 50) {
+                sLogCount++;
+                CLog(@"native: [UIScreen bounds] hooked -> %@ (pane=%d caller self=%@)",
+                     NSStringFromCGRect(hooked), gNativeFillCurrentPane,
+                     NSStringFromClass([self class]));
+            }
+            return hooked;
         }
-        return hooked;
     }
     return ((CGRect (*)(id, SEL))gOrigUIScreenBounds)(self, _cmd);
 }
@@ -1095,16 +1099,35 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         // App lays out its UI at that size — no transform deformation. The
         // appView frame is set to the pane size (not phone size), and the
         // content transform is identity.
-        gNativeFillSize = container.bounds.size;
+        //
+        // Per-pane size tracking: each pane gets its own entry in
+        // gNativeFillSizes[]. During FitAppViewToContainer we set
+        // gNativeFillCurrentPane so the hook returns THIS pane's size.
+        // The pane index is recovered from gSlots[].container.
+        int paneIndex = -1;
+        for (int i = 0; i < 3; i++) {
+            if (gSlots[i] && gSlots[i].container == container) {
+                paneIndex = i;
+                break;
+            }
+        }
+        gNativeFillCurrentPane = paneIndex;
+        if (paneIndex >= 0) {
+            gNativeFillSizes[paneIndex] = container.bounds.size;
+        }
         gNativeFillActive = YES;
 
         appView.frame = CGRectMake(0, 0, container.bounds.size.width, container.bounds.size.height);
         contentView.transform = CGAffineTransformIdentity;
         contentView.frame = container.bounds;
+        contentView.bounds = CGRectMake(0, 0, container.bounds.size.width, container.bounds.size.height);
         contentView.center = CGPointMake(container.bounds.size.width / 2.0,
                                          container.bounds.size.height / 2.0);
-        CLog(@"fit: native fill pane=%@ hook=ON appView=%@ contentView=%@ container=%@",
-             NSStringFromCGSize(container.bounds.size),
+        // Ensure the content container clips so the App's UI doesn't
+        // overflow the pane boundaries.
+        contentView.clipsToBounds = YES;
+        CLog(@"fit: native fill pane=%@ idx=%d hook=ON appView=%@ contentView=%@ container=%@",
+             NSStringFromCGSize(container.bounds.size), paneIndex,
              NSStringFromCGRect(appView.frame),
              NSStringFromCGRect(contentView.frame),
              NSStringFromCGRect(container.frame));
@@ -1112,6 +1135,11 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         CLog(@"fit: native fill appView.subviews=%d contentView.subviews=%d",
              (int)appView.subviews.count,
              (int)contentView.subviews.count);
+        // Force a synchronous layout pass NOW while gNativeFillCurrentPane
+        // still points to this pane — the App reads UIScreen.bounds
+        // during layout and must see THIS pane's size, not another's.
+        [contentView layoutIfNeeded];
+        [appView layoutIfNeeded];
     } else if (fitMode == 1) {
         gNativeFillActive = NO;
         // Non-uniform stretch: scale X and Y independently so the app content
@@ -1374,6 +1402,8 @@ static void TeardownAllHosts(void)
     // layout pass during invalidate may read [UIScreen bounds], and a
     // stale hooked size corrupts the next interface's window creation.
     gNativeFillActive = NO;
+    gNativeFillCurrentPane = -1;
+    for (int i = 0; i < 3; i++) gNativeFillSizes[i] = CGSizeZero;
     // Teardown ALL slots (not just PaneCount()) — when switching from 3-split
     // to 2-split, slot[2] must be torn down even though PaneCount() is now 2.
     for (int i = 0; i < 3; i++) {
@@ -1399,6 +1429,7 @@ static UIView *gDividers[2];  // up to 2 dividers for 3-pane split
 static UIView *gTestContainer;  // rotated container for landscape test preview
 static BOOL gTestMode;
 static BOOL gTestLandscape;  // tracks the TestLandscape pref of the active test interface
+static UIView *gLockHintLabel;  // "请锁屏手机后显示" banner shown when panes hidden
 static UIButton *gToggleButton;
 static int gCurrentPaneCount = 0;  // pane count of the currently active interface
 
@@ -1427,6 +1458,8 @@ static void HidePanesAndStandDown(NSString *why)
     }
     for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
     SetToggleGlyph(@"⟳");
+    // Show the "请锁屏手机后显示" hint banner.
+    if (gLockHintLabel) gLockHintLabel.hidden = NO;
     for (int index = 0; index < count; index++) {
         SlotSetMode(index, 0);
     }
@@ -1499,6 +1532,7 @@ static void ShowPanes(void)
         if (gPanes[index]) gPanes[index].hidden = NO;
     }
     for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
+    if (gLockHintLabel) gLockHintLabel.hidden = YES;
     SetToggleGlyph(@"✕");
 }
 
@@ -1525,6 +1559,7 @@ static void RestoreNow(void)
         if (gPanes[index]) gPanes[index].hidden = NO;
     }
     for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
+    if (gLockHintLabel) gLockHintLabel.hidden = YES;
     SetToggleGlyph(@"✕");
     for (int index = 0; index < count; index++) {
         RestoreSlot(index);
@@ -1556,6 +1591,7 @@ static void RestoreNow(void)
         for (int i = 0; i < 2; i++) gDividers[i] = nil;
         gTestContainer = nil;
         gToggleButton = nil;
+        gLockHintLabel = nil;
         gCurrentPaneCount = 0;
         gTestMode = NO;
         gTestLandscape = NO;
@@ -1774,6 +1810,14 @@ static void Layout(void)
         gToggleButton.frame = CGRectMake(8, 8, 48, 48);
         [toggleHost bringSubviewToFront:gToggleButton];
     }
+    // Lock hint label: centered at the top of the display.
+    if (gLockHintLabel) {
+        CGFloat hintW = 200;
+        CGFloat hintH = 32;
+        CGFloat hintX = (bounds.size.width - hintW) / 2.0;
+        gLockHintLabel.frame = CGRectMake(hintX, 10, hintW, hintH);
+        [toggleHost bringSubviewToFront:gLockHintLabel];
+    }
 }
 
 // A full-screen overlay window attached to SpringBoard's own scene claims
@@ -1896,9 +1940,9 @@ static void CreateInterface(BOOL testMode)
     
     // Create panes with blue translucent background.
     UIColor *paneColor = [UIColor colorWithRed:0.05 green:0.20 blue:0.55 alpha:0.55];
-    NSArray *paneTitles = @[@"DashSplit 探针\n第1屏", @"DashSplit 探针\n第2屏", @"DashSplit 探针\n第3屏"];
+    NSArray *paneTitles = @[@"加载App……", @"加载App……", @"加载App……"];
     for (int index = 0; index < count; index++) {
-        NSString *title = index < paneTitles.count ? paneTitles[index] : [NSString stringWithFormat:@"DashSplit 探针\n屏%d", index];
+        NSString *title = index < paneTitles.count ? paneTitles[index] : @"加载App……";
         gPanes[index] = MakePane(title, paneColor);
         [addTarget addSubview:gPanes[index]];
     }
@@ -1934,6 +1978,21 @@ static void CreateInterface(BOOL testMode)
     [addTarget addSubview:toggle];
     gWindow = window;
     gToggleButton = toggle;
+    
+    // "请锁屏手机后显示" hint banner — centered at the top, shown when panes
+    // are hidden (unlock auto-hide or manual hide). Semi-transparent background.
+    gLockHintLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+    gLockHintLabel.text = @"请锁屏手机后显示";
+    gLockHintLabel.textAlignment = NSTextAlignmentCenter;
+    gLockHintLabel.textColor = [UIColor whiteColor];
+    gLockHintLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+    gLockHintLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.5];
+    gLockHintLabel.layer.cornerRadius = 8;
+    gLockHintLabel.clipsToBounds = YES;
+    gLockHintLabel.hidden = YES;
+    gLockHintLabel.userInteractionEnabled = NO;
+    gLockHintLabel.layer.zPosition = 9998;
+    [addTarget addSubview:gLockHintLabel];
     
     Layout();
     
@@ -2081,6 +2140,7 @@ static void Tick(void)
                 for (int i = 0; i < 2; i++) gDividers[i] = nil;
                 gTestContainer = nil;
                 gToggleButton = nil;
+                gLockHintLabel = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
                 gTestLandscape = NO;
@@ -2100,6 +2160,7 @@ static void Tick(void)
                 for (int i = 0; i < 2; i++) gDividers[i] = nil;
                 gTestContainer = nil;
                 gToggleButton = nil;
+                gLockHintLabel = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
                 gTestLandscape = NO;
@@ -2116,6 +2177,7 @@ static void Tick(void)
                 for (int i = 0; i < 2; i++) gDividers[i] = nil;
                 gTestContainer = nil;
                 gToggleButton = nil;
+                gLockHintLabel = nil;
                 gCurrentPaneCount = 0;
                 // Fall through to CreateInterface below.
             } else if (gTestMode && gTestLandscape != PrefBool(kPrefsTestLandscape, YES)) {
@@ -2131,6 +2193,7 @@ static void Tick(void)
                 for (int i = 0; i < 2; i++) gDividers[i] = nil;
                 gTestContainer = nil;
                 gToggleButton = nil;
+                gLockHintLabel = nil;
                 gCurrentPaneCount = 0;
                 // Fall through to CreateInterface below.
             } else {
