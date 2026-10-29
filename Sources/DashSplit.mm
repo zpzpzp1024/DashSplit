@@ -1014,7 +1014,17 @@ static IMP gOrigUIScreenBounds;
 static CGRect DashSplitUIScreenBounds(id self, SEL _cmd)
 {
     if (gNativeFillActive && !CGSizeEqualToSize(gNativeFillSize, CGSizeZero)) {
-        return CGRectMake(0, 0, gNativeFillSize.width, gNativeFillSize.height);
+        CGRect hooked = CGRectMake(0, 0, gNativeFillSize.width, gNativeFillSize.height);
+        // Log the first 50 calls per activation to see who reads bounds
+        // and what they get — helps diagnose layout issues.
+        static int sLogCount = 0;
+        if (sLogCount < 50) {
+            sLogCount++;
+            CLog(@"native: [UIScreen bounds] hooked -> %@ (caller self=%@)",
+                 NSStringFromCGRect(hooked),
+                 NSStringFromClass([self class]));
+        }
+        return hooked;
     }
     return ((CGRect (*)(id, SEL))gOrigUIScreenBounds)(self, _cmd);
 }
@@ -1086,8 +1096,15 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         contentView.frame = container.bounds;
         contentView.center = CGPointMake(container.bounds.size.width / 2.0,
                                          container.bounds.size.height / 2.0);
-        CLog(@"fit: native fill pane=%@ hook=ON",
-             NSStringFromCGSize(container.bounds.size));
+        CLog(@"fit: native fill pane=%@ hook=ON appView=%@ contentView=%@ container=%@",
+             NSStringFromCGSize(container.bounds.size),
+             NSStringFromCGRect(appView.frame),
+             NSStringFromCGRect(contentView.frame),
+             NSStringFromCGRect(container.frame));
+        // Log the view hierarchy depth for diagnostics.
+        CLog(@"fit: native fill appView.subviews=%d contentView.subviews=%d",
+             (int)appView.subviews.count,
+             (int)contentView.subviews.count);
     } else if (fitMode == 1) {
         gNativeFillActive = NO;
         // Non-uniform stretch: scale X and Y independently so the app content
@@ -1129,11 +1146,20 @@ static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
     appView.autoresizingMask = UIViewAutoresizingNone;
     [container addSubview:appView];
     appView.frame = CGRectMake(0, 0, initialSize.width, initialSize.height);
+    CLog(@"scale: fitMode=%d initialSize=%@ container=%@ appView=%@",
+         fitMode,
+         NSStringFromCGSize(initialSize),
+         NSStringFromCGRect(container.frame),
+         NSStringFromCGRect(appView.frame));
     [appView layoutIfNeeded];
     FitAppViewToContainer(appView, container);
     // The initial scene activation may re-layout after us; re-assert the fit
     // once it settles so the first paint is fitted too.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        FitAppViewToContainer(appView, container);
+    });
+    // Second re-assert at 1.5s for slower scene setups.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         FitAppViewToContainer(appView, container);
     });
 }
@@ -1673,6 +1699,12 @@ static void Layout(void)
     UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
     CGRect bounds = host.bounds;
     
+    CLog(@"layout: host=%@ bounds=%@ testMode=%d testContainer=%@",
+         NSStringFromClass([host class]),
+         NSStringFromCGRect(bounds),
+         gTestMode,
+         gTestContainer ? NSStringFromCGRect(gTestContainer.bounds) : @"(nil)");
+    
     // Both test mode and car mode use the same horizontal split logic:
     // leave the leftmost strip for a system sidebar, then split the remaining
     // width into N columns based on user-configurable ratios.
@@ -1710,6 +1742,8 @@ static void Layout(void)
         if (gPanes[index]) {
             gPanes[index].frame = CGRectMake(sideMargin + origins[index], 0,
                                               widths[index], bounds.size.height);
+            CLog(@"layout: pane[%d] frame=%@ ratio=%d", index,
+                 NSStringFromCGRect(gPanes[index].frame), ratios[index]);
         }
     }
     for (int i = 0; i < count - 1 && i < 2; i++) {
