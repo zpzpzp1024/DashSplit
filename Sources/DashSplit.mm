@@ -1135,9 +1135,36 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         CLog(@"fit: native fill appView.subviews=%d contentView.subviews=%d",
              (int)appView.subviews.count,
              (int)contentView.subviews.count);
+        // Diagnostic: log the frame of each direct subview of contentView.
+        // If the App reflowed to the pane size, its root view frame should
+        // match paneW x paneH. If it's still 414x896 (phone size), the App
+        // is NOT responding to the contentView bounds change — it's using
+        // UIScreen.bounds or a fixed frame.
+        for (UIView *sub in contentView.subviews) {
+            CLog(@"fit: native fill contentView.sub frame=%@ class=%@",
+                 NSStringFromCGRect(sub.frame),
+                 NSStringFromClass([sub class]));
+        }
+        // Also log the appView's subviews (one level up).
+        for (UIView *sub in appView.subviews) {
+            CLog(@"fit: native fill appView.sub frame=%@ class=%@",
+                 NSStringFromCGRect(sub.frame),
+                 NSStringFromClass([sub class]));
+        }
         // Force a synchronous layout pass so the App reflows NOW.
         [contentView layoutIfNeeded];
         [appView layoutIfNeeded];
+        // Post-layout diagnostic: check if the App's subviews reflowed to
+        // the pane size or stayed at phone size.
+        CLog(@"fit: native fill POST-layout appView.frame=%@ appView.bounds=%@",
+             NSStringFromCGRect(appView.frame),
+             NSStringFromCGRect(appView.bounds));
+        for (UIView *sub in contentView.subviews) {
+            CLog(@"fit: native fill POST-layout contentView.sub frame=%@ bounds=%@ class=%@",
+                 NSStringFromCGRect(sub.frame),
+                 NSStringFromCGRect(sub.bounds),
+                 NSStringFromClass([sub class]));
+        }
     } else if (fitMode == 1) {
         gNativeFillActive = NO;
         // Non-uniform stretch: scale X and Y independently so the app content
