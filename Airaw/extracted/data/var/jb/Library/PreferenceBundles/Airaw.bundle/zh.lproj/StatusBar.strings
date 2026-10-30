@@ -1,0 +1,53 @@
+"Enable  / Disable" = "启用 / 禁用";
+
+"Enable or Disable the entire Status Bar" = "启用或禁用整个状态栏";
+
+"Default status bar" = "默认状态栏";
+
+"Disable Status Bar" = "禁用状态栏";
+
+"Show or hide the default status bar" = "显示或隐藏默认状态栏";
+
+"this function deletes the original status bar,if you want to show original status bar deactivate this function to show the original." = "此功能会删除原始状态栏，如果您想显示原始状态栏，请停用此功能以显示原始状态栏。";
+
+"Status bar date format" = "状态栏日期格式";
+
+"Enter @ if you want to start a new line." = "如果要开始新行，请输入@。";
+
+"Enabled" = "已启用";
+
+"Time Format:" = "时间格式：";
+
+"Date Format:" = "日期格式：";
+
+"Location:" = "位置：";
+
+"Font Size: %i" = "字体大小：%i";
+
+"Font Size: 5" = "字体大小：5";
+
+"Status bar position" = "状态栏位置";
+
+"This option to apply the changes you need to restart CarPlay." = "应用更改的此选项需要重新启动 CarPlay。";
+
+"Weather Settings" = "天气设置";
+
+"Show weather icon" = "显示天气图标";
+
+"Show temperature" = "显示温度";
+
+"Battery Settings" = "电池设置";
+
+"Show devices icons" = "显示设备图标";
+
+"If it doesn't show you the Weather correctly open the weather app and then connect the device to CarPlay." = "如果天气信息显示不正确，请打开天气应用程序，然后将设备连接到 CarPlay。";
+
+"Other" = "其他";
+
+"Remove battery icon" = "删除电池图标";
+
+"Devices with a Bluetooth connection to CarPlay will display a battery icon. This option is to remove the default battery icon." = "连接到 CarPlay 的带有蓝牙连接的设备将显示电池图标。 此选项用于删除默认的电池图标。";
+
+"Status bar color change" = "状态栏颜色更改";
+
+"Colors Change" = "颜色更改";

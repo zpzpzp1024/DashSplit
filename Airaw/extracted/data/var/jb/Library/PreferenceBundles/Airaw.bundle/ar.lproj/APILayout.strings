@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Lock Screen Dimming</key>
+	<string>تعتيم شاشة القفل</string>
+	<key>Lock Screen Dimming(Forced)</key>
+	<string>تعتيم شاشة القفل (إجباري)</string>
+	<key>It is recommended that this be enabled when the widget is added. The widget will continue to update even when the screen is locked.</key>
+	<string>يُنصح بتفعيل هذا عند إضافة الويدجت. سيستمر الويدجت في التحديث حتى عند قفل الشاشة.</string>
+	<key>Battey</key>
+	<string>البطارية</string>
+	<key>Music</key>
+	<string>الموسيقى</string>
+	<key>System</key>
+	<string>النظام</string>
+	<key>Statusbar</key>
+	<string>معلومات شريط الحالة</string>
+	<key>Weather</key>
+	<string>الطقس</string>
+	<key>CarPlay</key>
+	<string>CarPlay</string>
+	<key>API Information</key>
+	<string>معلومات API</string>
+	<key>Create a widget using Airaw API !!</key>
+	<string>أنشئ ويدجت باستخدام API Airaw!!</string>
+</dict>
+</plist>

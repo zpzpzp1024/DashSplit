@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Add Widgets</key>
+	<string>إضافة الودجت</string>
+	<key>Add widgets to CarPlay</key>
+	<string>إضافة الودجت إلى CarPlay</string>
+	<key>App Selection</key>
+	<string>اختيار التطبيق</string>
+	<key>Backup/Restore</key>
+	<string>نسخ احتياطي/استعادة النسخة </string>
+	<key>CarPlay Wallpaper</key>
+	<string>الخلفية</string>
+	<key>CarPlay icon customization</key>
+	<string>تخصيص أيقونات CarPlay</string>
+	<key>CarPlay wallpaper customization</key>
+	<string>تخصيص خلفيات CarPlay</string>
+	<key>Choose your option</key>
+	<string>اختر خيارك</string>
+	<key>Developer Repository</key>
+	<string>سورس المطور</string>
+	<key>Donate with PayPal</key>
+	<string>تبرع عبر PayPal</string>
+	<key>Email Support</key>
+	<string>البريد الإلكتروني</string>
+	<key>Enabled</key>
+	<string>تفعيل</string>
+	<key>Enabled / Disable</key>
+	<string>تفعيل / تعطيل</string>
+	<key>Icon Layout</key>
+	<string>تخطيط الأيقونات</string>
+	<key>Other</key>
+	<string>اخرئ</string>
+	<key>Special Thanks</key>
+	<string>شكر خاص</string>
+	<key>Status Bar</key>
+	<string>شريط الحالة</string>
+	<key>Status bar customization</key>
+	<string>إعدادات شريط الحالة</string>
+	<key>Support</key>
+	<string>الدعم الفني</string>
+	<key>The second option is used to choose applications to have in full screen mode.</key>
+	<string>يتم استخدام الخيار الثاني لاختيار التطبيقات المطلوب وضعها في وضع ملء الشاشة.</string>
+</dict>
+</plist>

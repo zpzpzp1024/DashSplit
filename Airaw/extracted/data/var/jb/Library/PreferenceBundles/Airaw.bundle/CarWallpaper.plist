@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<!-- CarPlayの壁紙のカスタマイズ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+            <key>footerText</key>
+			<string></string>
+            <key>id</key>
+			<string>new_line</string>
+        </dict>
+
+        <!-- Wallpaper有効化をするか -->
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kWallEnabled</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+		<!-- 壁紙をスライドショーにスカ選ぶ -->
+		<dict>
+            <key>cell</key>
+            <string>PSSegmentCell</string>
+            <key>default</key>
+            <integer>0</integer>
+            <key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+            <key>key</key>
+            <string>kWallpaperMotion</string>
+            <key>validValues</key>
+            <array>
+                <integer>0</integer>
+                <integer>1</integer>
+            </array>
+            <key>validTitles</key>
+            <array>
+                <string>Only Wallpaper</string>
+                <string>Wallpaper Slide Show</string>
+            </array>
+			<key>id</key>
+            <string>WallaperStatus</string>
+        </dict>
+
+		<!-- 画像を選択させる -->
+		<dict>
+			<key>cellClass</key>
+			<string>AirawdcsyhiImagePickerCell</string>
+            <key>key</key>
+            <string>kWallpaper</string>
+			<key>id</key>
+            <string>OnlyWallaper</string>
+		</dict>
+
+		<!--スライドショー画像の選択-->
+		<dict>
+			<key>action</key>
+			<string>SlideshowOpen</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>Wallpaper Slide Show</string>
+			<key>id</key>
+            <string>WallaperSlideShow</string>
+        </dict>
+        <!-- 画像サイズの指定 -->
+		<dict>
+            <key>cell</key>
+            <string>PSSegmentCell</string>
+            <key>default</key>
+            <integer>1</integer>
+            <key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+            <key>key</key>
+            <string>kFict</string>
+            <key>validValues</key>
+            <array>
+                <integer>0</integer>
+                <integer>1</integer>
+            </array>
+            <key>validTitles</key>
+            <array>
+                <string>default</string>
+                <string>Fict</string>
+            </array>
+        </dict>
+	</array>
+	<key>title</key>
+	<string></string>
+</dict>
+</plist>

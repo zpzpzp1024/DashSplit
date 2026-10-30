@@ -1,0 +1,54 @@
+[
+    {
+        "title":"1.0",
+        "text":"Initial Release"
+    },
+    {
+        "title":"Update contents(1.2)",
+        "text":"・Widgets can be added to CarPlay."
+    },
+    {
+        "title":"Update contents(1.5)",
+        "text":"・Increased stability for Airaw.\n・Interactive widgets.\n・Create transparent Icons from preference.\n・Fixed the widget not working when the screen goes off."
+    },
+    {
+        "title":"Update contents(1.5.1)",
+        "text":"・Fixed an issue where ColorPicker values were not saved correctly.\n・Show or hide the default status bar Add items to the status bar settings.\n・Fixed an issue where the temperature was not centered."
+    },
+    {
+        "title":"Update contents(1.5.2)",
+        "text":"・Expanded Airaw API functionality.\n・The feeling to the left and right of the icon can be customized."
+    },
+    {
+        "title":"Update contents(1.5.3)",
+        "text":"・Backup/Restore function added\n・Full screen view of the app\n・Change how to get weather with Airaw API\n・DRM Protection"
+    },
+    {
+        "title":"Update contents(1.5.4)",
+        "text":"・Fixed a bug that widgets are not displayed during wallpaper slideshows.\n・Removed the default battery icon in the status bar.\n・The full screen button can be resized.\n・Removes the splash screen when starting CarPlay.\n・Fixed a crash when selecting an app on the \"App Selection\" screen.\n・Fixed an issue that did not work with Taurine jailbreak.\n・Added Arabic translation."
+    },
+    {
+        "title":"Update contents(1.5.5)",
+        "text":"・Fixed a crash when connecting to CarPlay.\n・Fixed an issue where Taurine Jailbreak could not get Airaw API music information."
+    },
+    {
+        "title":"Update contents(1.6 - 1.6.1)",
+        "text":"・Support iOS15.\n・Keypad Access Bypass.\n・Status bar color change addition function.\n・Extended the information that can be retrieved by the Airwa API."
+    },
+    {
+        "title":"Update contents(1.6.2)",
+        "text":"・Fixed problem with dimming not working.\nAdded the ability to force dimming to ON in case it is not fixed.\n・Slight change in method for creating transparent icons.\n・Battery icon in status bar, DND, and Focus color can be changed.\n・Support iOS16.(Except Widgets)."
+    },
+    {
+        "title":"Update contents(1.6.3)",
+        "text":"・Fixed a problem that transparent icons are not displayed.\n・The color of the status bar can be changed.\n・CarPlay Home button color customizable.\n・The position of the status bar can now be customized to the left, right, up, and down."
+    },
+    {
+        "title":"Update contents(1.6.4)",
+        "text":"・Fixed crash when closing fullscreen selection app.\n・Fixed a problem that a black background remains when screenshotting when disconnecting from CarPlay.・Fixed a problem that transparent icons are not displayed(2)."
+    },
+    {
+        "title":"Update contents(1.6.5)",
+        "text":"・Fixed a problem that transparent icons are not displayed(3)."
+    }
+]

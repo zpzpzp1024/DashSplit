@@ -1,0 +1,356 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<!--* ステータスバー背景色  -->
+        <dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Status bar background color</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnaStatusbarColor</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Background Color</string>
+			<key>key</key>
+			<string>kBackgroundColor</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>TIME and Carrier</string>
+		</dict>
+		<!-- *時間 -->
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnaTimeColor</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kTimeColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Time Color</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kCarrierColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Carrier Color</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Wifi</string>
+		</dict>
+		<!-- *Wifi -->
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnaWifiColor</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kWifiColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Color</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>LET</string>
+		</dict>
+
+		<!-- *LTE Signal -->
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnaLteColor</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kLTEOnColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>On Color</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kLTEOffColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Off Color</string>
+		</dict>
+
+		<!-- *DND 運転集中モード -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>DND and Focus</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnaDndColor</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kDndColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Color</string>
+		</dict>
+
+		<!-- *バッテリー -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Battery</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnaBatteryColor</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kBBodyColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Body Color</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kBFillColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Fill Color</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kBPinColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Pin Color</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kBBoltColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Bolt Color</string>
+		</dict>
+
+		<!-- ステータスバーのボタン -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Home Button</string>
+			<key>footerText</key>
+			<string></string>
+			<key>id</key>
+			<string>status_barcolor</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnaHomeButton</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>kHomeBTintColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Tint Color</string>
+		</dict>
+		<!-- カスタムボタン -->
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnaHomeImage</string>
+            <key>label</key>
+            <string>Enabling Custom Images</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AirawIconHome</string>
+			<key>subtitle</key>
+			<string>square.grid.3x2</string>
+			<key>key</key>
+            <string>kEnaHomeState</string>
+            <key>label</key>
+            <string>Home Down</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AirawIconHome</string>
+			<key>subtitle</key>
+			<string>square.grid.3x2.fill</string>
+			<key>key</key>
+            <string>kEnaHomeOut</string>
+            <key>label</key>
+            <string>Home Up</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string></string>
+</dict>
+</plist>

@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<!-- ロック状態でも使用を可能にする -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>It is recommended that this be enabled when the widget is added.The widget will continue to update even when the screen is locked.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kDimming</string>
+            <key>label</key>
+            <string>Lock Screen Dimming</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kDimmingForce</string>
+            <key>label</key>
+            <string>Lock Screen Dimming(Forced)</string>
+		</dict>
+
+		<!-- 有効化するAPI情報 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>cellClass</key>
+            <string>AirawSubSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kAPI_Battey</string>
+            <key>label</key>
+            <string>Battey</string>
+			<key>sublabel</key>
+			<string>Retrieve battery information</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>cellClass</key>
+            <string>AirawSubSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kAPI_Music</string>
+            <key>label</key>
+            <string>Music</string>
+			<key>sublabel</key>
+			<string>Retrieve music information</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>cellClass</key>
+            <string>AirawSubSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kAPI_System</string>
+            <key>label</key>
+            <string>System</string>
+			<key>sublabel</key>
+			<string>Retrieve system information</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>cellClass</key>
+            <string>AirawSubSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kAPI_Statusbar</string>
+            <key>label</key>
+            <string>Statusbar</string>
+			<key>sublabel</key>
+			<string>Retrieve statusbar information</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>cellClass</key>
+            <string>AirawSubSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kAPI_Weather</string>
+            <key>label</key>
+            <string>Weather</string>
+			<key>sublabel</key>
+			<string>Retrieve weather information</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>cellClass</key>
+            <string>AirawSubSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kAPI_CarPlay</string>
+            <key>label</key>
+            <string>CarPlay</string>
+			<key>sublabel</key>
+			<string>Retrieve CarPlay information</string>
+		</dict>
+
+		<!-- Airaw API -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>API Information</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+            <string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>HBLinkTableCell</string>
+			<key>label</key>
+			<string>Airaw API</string>
+			<key>url</key>
+			<string>https://dcsyhi1998.github.io/airawapi.html</string>
+			<key>subtitle</key>
+			<string>Create a widget using Airaw API !!</string>
+			<key>action</key>
+            <string>openSafari:</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string>Airaw API</string>
+</dict>
+</plist>

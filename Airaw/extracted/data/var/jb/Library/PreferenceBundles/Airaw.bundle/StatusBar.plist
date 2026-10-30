@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Enable  / Disable</string>
+			<key>footerText</key>
+			<string>Enable or Disable the entire Status Bar</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kStatusBar</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+
+		<!-- *ステータスバーの位置 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Status bar position</string>
+			<key>footerText</key>
+			<string>This option to apply the changes you need to restart CarPlay.</string>
+		</dict>
+
+		<!-- ハンドルのポジション -->
+		<dict>
+            <key>cell</key>
+            <string>PSSegmentCell</string>
+            <key>default</key>
+            <integer>0</integer>
+			<key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kHandle</string>
+            <key>validValues</key>
+            <array>
+                <integer>0</integer>
+                <integer>1</integer>
+            </array>
+            <key>validTitles</key>
+            <array>
+                <string>Left hand drive</string>
+                <string>Right hand drive</string>
+            </array>
+        </dict>
+		<!-- ステータスバーのポジション -->
+		<dict>
+            <key>cell</key>
+            <string>PSSegmentCell</string>
+            <key>default</key>
+            <integer>0</integer>
+			<key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kPositionStatusBar</string>
+            <key>validValues</key>
+            <array>
+                <integer>0</integer>
+                <integer>2</integer>
+                <integer>3</integer>
+                <integer>1</integer>
+            </array>
+            <key>validTitles</key>
+            <array>
+                <string>Left</string>
+                <string>Right</string>
+                <string>Top</string>
+                <string>Bottom</string>
+            </array>
+        </dict>
+		<!-- 画像のプレビュー -->
+		<dict>
+			<key>cell</key>
+			<string>PSTitleValueCell</string>
+			<key>cellClass</key>
+			<string>AirawDockPostion</string>
+			<key>height</key>
+			<string>180</string>
+		</dict>
+
+		<!-- *ステータスバーのカスタマイズ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Status bar date format</string>
+			<key>footerText</key>
+			<string>Enter @ if you want to start a new line.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kShowDate</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+
+		<dict>
+            <key>cellClass</key>
+            <string>AirawClock</string>
+            <key>height</key>
+            <string>80</string>
+        </dict>
+
+		<!-- *日付のフォーマット -->
+		<dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>cellClass</key>
+            <string>AirawReturnCell</string>
+			<key>default</key>
+			<string>EE,MMM d</string>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+            <key>key</key>
+            <string>kDateFormat</string>
+            <key>label</key>
+            <string>Date Format:</string>
+            <key>placeholder</key>
+            <string>EEEE,MMM d</string>
+		</dict>
+		<!-- 地域指定 -->
+		<dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>cellClass</key>
+            <string>AirawReturnCell</string>
+			<key>default</key>
+			<string>en_US_POSIX</string>
+            <key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+            <key>key</key>
+            <string>kLocation</string>
+            <key>label</key>
+            <string>Location:</string>
+            <key>placeholder</key>
+            <string>en_US_POSIX</string>
+		</dict>
+
+		<!-- fontサイズ変更 -->
+		<dict>
+			<key>cellClass</key>
+			<string>HBStepperTableCell</string>
+			<key>default</key>
+			<real>8</real>
+			<key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+			<string>kFontSize</string>
+			<key>label</key>
+			<string>Font Size: %i</string>
+			<key>min</key>
+			<real>5</real>
+			<key>max</key>
+			<real>10</real>
+			<key>singularLabel</key>
+			<string>Font Size: 5</string>
+		</dict>
+		<!-- Y軸のポジション -->
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>cellClass</key>
+			<string>AirawSliderCell</string>
+			<key>label</key>
+			<string>Y Axis :</string>
+			<key>default</key>
+			<integer>30</integer>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kPosDate</string>
+			<key>min</key>
+			<integer>0</integer>
+            <key>max</key>
+			<integer>220</integer>
+			<key>showValue</key>
+			<true/>
+			<key>id</key>
+			<string>slider_cutom</string>
+		</dict>
+
+		<!-- *Wifi LTE Time -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Status bar color change</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>AirawStatusBarColor</string>
+			<key>label</key>
+			<string>Colors Change</string>
+		</dict>
+
+		<!--* 天気アイコン  -->
+        <dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Weather Settings</string>
+			<key>footerText</key>
+			<string>If it doesn't show you the Weather correctly open the weather app and then connect the device to CarPlay.</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kWeather_icon</string>
+            <key>label</key>
+            <string>Show weather icon</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kWeather_temperature</string>
+            <key>label</key>
+            <string>Show temperature</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>cellClass</key>
+			<string>AirawSliderCell</string>
+			<key>label</key>
+			<string>Y Axis :</string>
+			<key>default</key>
+			<integer>40</integer>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kPosWeather</string>
+			<key>min</key>
+			<integer>0</integer>
+            <key>max</key>
+			<integer>220</integer>
+			<key>showValue</key>
+			<true/>
+			<key>id</key>
+			<string>slider_cutom</string>
+		</dict>
+
+		<!-- *バッテリーアイコン -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Battery Settings</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kdevice_icon</string>
+            <key>label</key>
+            <string>Show devices icons</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>cellClass</key>
+			<string>AirawSliderCell</string>
+			<key>label</key>
+			<string>Y Axis :</string>
+			<key>default</key>
+			<integer>180</integer>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kBattery</string>
+			<key>min</key>
+			<integer>0</integer>
+            <key>max</key>
+			<integer>250</integer>
+			<key>showValue</key>
+			<true/>
+			<key>id</key>
+			<string>slider_cutom</string>
+		</dict>
+
+		<!-- *その他 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Other</string>
+			<key>footerText</key>
+			<string>Devices with a Bluetooth connection to CarPlay will display a battery icon. This option is to remove the default battery icon.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kRemoveBattery</string>
+            <key>label</key>
+            <string>Remove battery icon</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>©️Dcsyhi 2021 - 2024 Airaw v1.6.5</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string></string>
+</dict>
+</plist>

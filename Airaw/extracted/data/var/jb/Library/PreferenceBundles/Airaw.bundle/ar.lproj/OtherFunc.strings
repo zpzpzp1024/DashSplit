@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Other Functions</key>
+	<string>وظائف أخرى</string>
+	<key>Remove splash screen</key>
+	<string>إزالة شاشة البداية</string>
+	<key>Keypad Access Bypass</key>
+	<string>تجاوز وصول لوحة المفاتيح</string>
+	<key>Dark mode for stock maps</key>
+	<string>الوضع الداكن للخرائط الأساسية</string>
+</dict>
+</plist>

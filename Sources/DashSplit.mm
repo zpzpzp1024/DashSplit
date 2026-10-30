@@ -2345,9 +2345,45 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.41 loaded ---");
+        CLog(@"--- DashSplit 0.1.42-carplayapp loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
+        
+        // Probe: check what APIs are available in this process.
+        // In com.apple.CarPlayApp, SBAppViewController and related classes
+        // may have different methods than in SpringBoard.
+        Class sbAppVC = NSClassFromString(@"SBAppViewController");
+        CLog(@"probe: SBAppViewController=%@", sbAppVC ? NSStringFromClass(sbAppVC) : @"NOT FOUND");
+        
+        Class sbSceneView = NSClassFromString(@"SBDeviceApplicationSceneView");
+        CLog(@"probe: SBDeviceApplicationSceneView=%@", sbSceneView ? NSStringFromClass(sbSceneView) : @"NOT FOUND");
+        
+        if (sbSceneView) {
+            SEL refSizeSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
+            CLog(@"probe: setContentReferenceSize:withInterfaceOrientation: = %d", [sbSceneView instancesRespondToSelector:refSizeSel]);
+            
+            SEL updateRefSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
+            CLog(@"probe: _updateReferenceSize:andOrientation: = %d", [sbSceneView instancesRespondToSelector:updateRefSel]);
+        }
+        
+        Class sceneManagerCoordinator = NSClassFromString(@"SBSceneManagerCoordinator");
+        CLog(@"probe: SBSceneManagerCoordinator=%d", sceneManagerCoordinator != nil);
+        
+        Class sbAppController = NSClassFromString(@"SBApplicationController");
+        CLog(@"probe: SBApplicationController=%d", sbAppController != nil);
+        
+        Class sbEntity = NSClassFromString(@"SBDeviceApplicationSceneEntity");
+        CLog(@"probe: SBDeviceApplicationSceneEntity=%d", sbEntity != nil);
+        
+        // Check CarPlay display availability
+        Class avExternalDevice = NSClassFromString(@"AVExternalDevice");
+        CLog(@"probe: AVExternalDevice=%d", avExternalDevice != nil);
+        
+        // Check UIScreen
+        CLog(@"probe: UIScreen mainScreen bounds=%@", NSStringFromCGRect([UIScreen mainScreen].bounds));
+        
+        // Check if we can create a window
+        CLog(@"probe: process name=%@", [[NSProcessInfo processInfo] processName]);
         
         // Read crash count from last session.
         NSString *crashCountText = [NSString stringWithContentsOfFile:@COCKPIT_CRASHCOUNT encoding:NSUTF8StringEncoding error:nil];

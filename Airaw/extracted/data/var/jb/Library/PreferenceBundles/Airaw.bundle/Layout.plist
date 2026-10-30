@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<!-- &#x0A; -->
+		<!-- 透明アイコン -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Generate transparent icon</string>
+			<key>footerText</key>
+			<string>After generating the transparent icon, add it to CarPlay with CarBridge.</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+			<string>HBStepperTableCell</string>
+			<key>default</key>
+			<real>0</real>
+			<key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+			<string>kVicon</string>
+			<key>label</key>
+			<string>The number of icons : %i</string>
+			<key>min</key>
+			<real>0</real>
+			<key>max</key>
+			<real>20</real>
+			<key>singularLabel</key>
+			<string>The number of icons : 1</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>orangeBtnColor</string>
+			<key>action</key>
+			<string>CreateIcons</string>
+			<key>alignment</key>
+			<integer>2</integer>
+			<key>label</key>
+			<string>Create Blank Icons</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>OpenCarPlay</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>CarPlay Setings</string>
+		</dict>
+		<!-- アプリの行数 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Number of CarPlay dashboard app rows</string>
+		</dict>
+
+		<dict>
+            <key>cell</key>
+            <string>PSSegmentCell</string>
+            <key>default</key>
+            <integer>3</integer>
+			<key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kRows</string>
+            <key>validValues</key>
+            <array>
+                <integer>2</integer>
+                <integer>3</integer>
+                <integer>4</integer>
+            </array>
+            <key>validTitles</key>
+            <array>
+                <string>2</string>
+                <string>3</string>
+                <string>4</string>
+            </array>
+        </dict>
+
+		<!-- アプリの列数 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Number of CarPlay dashboard app columns</string>
+		</dict>
+
+		<dict>
+            <key>cell</key>
+            <string>PSSegmentCell</string>
+            <key>default</key>
+            <integer>5</integer>
+			<key>defaults</key>
+            <string>jp.dcsyhi.airaw</string>
+            <key>key</key>
+            <string>kColumns</string>
+            <key>validValues</key>
+            <array>
+                <integer>4</integer>
+                <integer>5</integer>
+                <integer>6</integer>
+            </array>
+            <key>validTitles</key>
+            <array>
+                <string>4</string>
+                <string>5</string>
+                <string>6</string>
+            </array>
+        </dict>
+
+		<!-- *アプリアイコンサイズ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CarPlay dashboard app icon size</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<integer>40</integer>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+			<string>kIconSize</string>
+			<key>min</key>
+			<integer>20</integer>
+            <key>max</key>
+			<integer>70</integer>
+			<key>showValue</key>
+			<true />
+            <key>isSegmented</key>
+            <true />
+            <key>segmentCount</key>
+			<integer>10</integer>
+		</dict>
+
+		<!-- 上からの感覚 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CarPlay dashboard app icon Top offset</string>
+			<key>footerText</key>
+			<string>Default Top Offset = 30</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<integer>30</integer>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+			<string>kTop_inset</string>
+			<key>min</key>
+			<integer>0</integer>
+            <key>max</key>
+			<integer>150</integer>
+			<key>showValue</key>
+			<true />
+		</dict>
+
+		<!-- *下からの感覚 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CarPlay dashboard app icon Bottom offset</string>
+			<key>footerText</key>
+			<string>Default Bottom Offset = -30</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<integer>-30</integer>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+			<string>kBottom_inset</string>
+			<key>min</key>
+			<integer>-70</integer>
+            <key>max</key>
+			<integer>50</integer>
+			<key>showValue</key>
+			<true />
+		</dict>
+
+		<!-- *左の感覚 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CarPlay dashboard app icon Left offset</string>
+			<key>footerText</key>
+			<string>Default left Offset = 20</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<integer>20</integer>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+			<string>kLeft_inset</string>
+			<key>min</key>
+			<integer>0</integer>
+            <key>max</key>
+			<integer>200</integer>
+			<key>showValue</key>
+			<true />
+		</dict>
+
+		<!-- *右の感覚 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CarPlay dashboard app icon Right offset</string>
+			<key>footerText</key>
+			<string>Default right Offset = 20</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<integer>20</integer>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+			<string>kRight_inset</string>
+			<key>min</key>
+			<integer>0</integer>
+            <key>max</key>
+			<integer>200</integer>
+			<key>showValue</key>
+			<true />
+		</dict>
+
+		<!-- CarPlayのラベルのカスタマイズ -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Carplay App Label customize</string>
+			<key>footerText</key>
+			<string>©️Dcsyhi 2021 - 2024 Airaw v1.6.5</string>
+		</dict>
+		<dict><!-- Labelの非表示 -->
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kHideLabel</string>
+            <key>label</key>
+            <string>Hide Icon Label</string>
+		</dict>
+		<dict><!-- Label背景の非表示 -->
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kHideLabelback</string>
+            <key>label</key>
+            <string>Hide Label Background</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+            <string>AColorPicker</string>
+			<key>fallback</key>
+			<string>FFFFFF</string>
+			<key>key</key>
+			<string>klblColor</string>
+			<key>supportAlpha</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>label</key>
+			<string>Icon Label Color</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kDots</string>
+            <key>label</key>
+            <string>Hide Dots</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string>Layout</string>
+</dict>
+</plist>

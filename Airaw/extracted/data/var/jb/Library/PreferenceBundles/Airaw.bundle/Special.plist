@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>translation</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+			<string>HBTwitterCell</string>
+			<key>label</key>
+			<string>Dcsyhi (Japanese🇯🇵)</string>
+			<key>user</key>
+			<string>linux_n1</string>
+			<key>action</key>
+            <string>openSpecialThanks:</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+			<string>HBTwitterCell</string>
+			<key>label</key>
+			<string>Kingme_hu (Chinese🇨🇳)</string>
+			<key>user</key>
+			<string>StayLearn2019</string>
+			<key>action</key>
+            <string>openSpecialThanks:</string>
+		</dict>
+		<dict>
+			<key>cellClass</key>
+			<string>HBTwitterCell</string>
+			<key>label</key>
+			<string>ᏗɮɖᏬιιαɦ||﮼عبدالله (Arabic🇸🇦)</string>
+			<key>user</key>
+			<string>CydiaAbdullah</string>
+			<key>action</key>
+            <string>openSpecialThanks:</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+            <string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>HBLinkTableCell</string>
+			<key>label</key>
+			<string>BVN_VN (Vietnam🇻🇳)</string>
+			<key>url</key>
+			<string>https://www.facebook.com/bvnmobileservices999</string>
+			<key>subtitle</key>
+			<string>Facebook</string>
+			<key>action</key>
+            <string>openSafari:</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>orangeBtnColor</string>
+			<key>action</key>
+			<string>SupportTranslations</string>
+			<key>alignment</key>
+			<integer>2</integer>
+			<key>label</key>
+			<string>Add or revise translations</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>LICENSE</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+            <string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>HBLinkTableCell</string>
+			<key>label</key>
+			<string>CarPlayEnable</string>
+			<key>url</key>
+			<string>https://github.com/EthanArbuckle/carplay-cast/blob/master/LICENSE</string>
+			<key>subtitle</key>
+			<string>Some reference source code.</string>
+			<key>action</key>
+            <string>openSafari:</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+            <string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>HBLinkTableCell</string>
+			<key>label</key>
+			<string>libpddokdo</string>
+			<key>url</key>
+			<string>https://github.com/s8ngyu/libpddokdo/blob/master/LICENSE</string>
+			<key>subtitle</key>
+			<string>I referred to this when obtaining weather information.</string>
+			<key>action</key>
+            <string>openSafari:</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+            <string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>HBLinkTableCell</string>
+			<key>label</key>
+			<string>Symbols</string>
+			<key>url</key>
+			<string>https://github.com/MTACS/Symbols/blob/master/LICENSE.md</string>
+			<key>subtitle</key>
+			<string></string>
+			<key>action</key>
+            <string>openSafari:</string>
+		</dict>
+
+		<!-- Airaw API -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>API Information</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+            <string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>HBLinkTableCell</string>
+			<key>label</key>
+			<string>Airaw API</string>
+			<key>url</key>
+			<string>https://dcsyhi1998.github.io/airawapi.html</string>
+			<key>subtitle</key>
+			<string>Create a widget using Airaw API !!</string>
+			<key>action</key>
+            <string>openSafari:</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string>Special Thanks</string>
+</dict>
+</plist>

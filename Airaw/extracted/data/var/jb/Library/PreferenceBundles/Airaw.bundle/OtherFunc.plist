@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Other Functions</string>
+			<key>footerText</key>
+			<string>©️Dcsyhi 2021 - 2024 Airaw v1.6.5</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kRemoveSplash</string>
+            <key>label</key>
+            <string>Remove splash screen</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kRemoveKeypad</string>
+            <key>label</key>
+            <string>Keypad Access Bypass</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<true/>
+            <key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kDarkMap</string>
+            <key>label</key>
+            <string>Dark mode for stock maps</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string></string>
+</dict>
+</plist>

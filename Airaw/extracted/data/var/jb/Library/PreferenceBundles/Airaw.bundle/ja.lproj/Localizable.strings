@@ -1,0 +1,220 @@
+"Choose your option" = "オプションを選択してください";
+
+"Cancel" = "キャンセル";
+
+"Donate with PayPal" = "PayPalで寄付";
+
+"Share Tweak" = "Airawを共有";
+
+"Respring" = "再起動";
+
+"Restart CarPlay" = "CarPlayを再起動";
+
+"Choose your option\nIf you just want to restart the CarPlay screen select the first option." = "オプションを選択してください\n CarPlay画面だけを再起動したいだけの場合は、最初のオプションを選択してください。";
+
+"Reflect Change on CarPlay" = "CarPlayに変更を反映";
+
+"Reset Icon Layout" = "レイアウト設定のリセット";
+
+"Let's change the layout of the CarPlay screen." = "CarPlay画面のレイアウトを変えよう";
+
+"Change the wallpaper to your liking." = "お好みの壁紙に変更しよう";
+
+"Edit" = "編集";
+
+"Choose image" = "画像の選択";
+
+"Added Widgets" = "追加してあるウィジェット";
+
+"No Widgets added" = "ウィジェットは追加されていません";
+
+"Add Widget" = "ウィジェットの追加";
+
+"Add your favorite widgets to your CarPlay." = "お気に入りのウィジェットをCarPlayに追加しよう";
+
+"Support" = "サポート";
+
+"what kind of support do you want?" = "どんなサポートが欲しいですか？";
+
+"Function Request" = "機能リクエスト";
+
+"Bug Report" = "バグ報告";
+
+"Register for email" = "メール登録";
+
+"I haven't registered my email." = "メール登録がされていません。";
+
+"Customize the status bar to your liking !!" = "ステータスバーを自由自在にカスタマイズしよう！！";
+
+"App selection" = "アプリ選択";
+
+"Precautions" = "注意事項";
+
+"App to reflect" = "反映するアプリ";
+
+"The app selected in this way gets the app view in a different way than CarBridge.\nSo please note that it works differently from CarBridge." = "この方法で選択されたアプリの反映はCarBridgeとは異なります。\nですので、動作の違いが発生してしまいます。";
+
+"Backup/Restore" = "バックアップ/復元";
+
+"Create new backup" = "新しいバックアップを作成";
+
+"Widgets to CarPlay" = "ウィジェットの追加";
+
+"Widget placement page" = "ウィジェット配置ページ";
+
+"Universal mode places the Widgets on all CarPlay Pages.\nThe [Specify] mode is to specify on which Page you want to place the Widget." = "全ページを選択した場合はウィジェットをCarPlayの全ページに配置します。\nページ指定はテキストボックスに入力してあるページにのみウィジェットを配置します。";
+
+"Universal" = "全ページ";
+
+"Specify" = "ページ指定";
+
+"Widget position" = "ウィジェットポジション";
+
+"Do you want to apply the changes in CarPlay?" = "変更をCarPlayに反映しますか？";
+
+"Would you like to return to the default settings?" = "変更を初期状態に戻します？";
+
+"Yes" = "はい";
+
+"No" = "いいえ";
+
+"Do you want to select a customized image ??" = "カスタマイズした画像を選択しますか？";
+
+"Create New Backup:" = "新しいバックアップを作成:";
+
+"Backup Name" = "バックアップ名入力";
+
+"Backup name..." = "バックアップ名...";
+
+"Create Backup" = "バックアップ作成";
+
+"Do you want to restore to \"%@\" ?" = "「%@」に復元しますか？";
+
+"Not all apps selected this way will work properly. Please note that some apps may not work.\n\nI haven't got an iOS 13 device, so I haven't been able to test it. It may not work properly." = "この方法で選択されたアプリは全部が正常に動作するわけではありません。中には動作しないアプリもあるので注意してください。\n\n※iOS13のデバイスを持ち合わせていないためテストができていません。正常な動作しない場合があります。";
+
+"Icon Layout" = "アイコンレイアウト";
+
+"Wallpaper" = "壁紙";
+
+"Create" = "生成";
+
+"Warning" = "注意";
+
+"To create transparent icons it may take more than 10 seconds." = "透明アイコンの生成に10秒以上かかる場合があります。";
+
+"Button position" = "ボタンのポジション";
+
+"Special Thanks" = "特別な感謝";
+
+"Status Bar" = "ステータスバー";
+
+"Show or hide the default status bar" = "デフォルトのステータスバーの表示or非表示";
+
+"Reset Status Bar" = "ステータスバー設定のリセット";
+
+"Reset Wallpaper" = "壁紙設定のリセット";
+
+"Backup restored successfuly" = "バックアップが正常に復元されました";
+
+"Page :" = "ページ :";
+
+"Y Axis :" = "Y軸 :";
+
+"X Axis :" = "X軸 :";
+
+"Width :" = "幅 :";
+
+"Zoom Level: %i%%" = "ズーム : %i%%";
+
+"Size :" = "サイズ :";
+
+"Open URL" = "URLを開く";
+
+"What is a time format?" = "時間形式とは？";
+
+"If you want to know more, tap the URL button to check.\n\nexample:\n14:40:42\t\tHH:mm:ss" = "詳細を知りたい場合は、URLボタンをタップして確認してください。\n\n例:\n14:40:42\t\tHH:mm:ss";
+
+"What is a date format?" = "日付形式とは？";
+
+"If you want to know more, tap the URL button to check.\n\nexample:\nWednesday, May 19, 2021\nEEEE, MMM d, yyyy" = "詳細を知りたい場合は、URLボタンをタップして確認してください。\n\n例:\nWednesday, May 19, 2021\nEEEE, MMM d, yyyy";
+
+"What is the Location format?" = "ロケーション形式とは？";
+
+"If you want to select another format, please check the url." = "別のフォーマットを選択したい場合は、URLを開き確認してください。";
+
+"Wallpaper Slideshow" = "壁紙のスライドショー";
+
+"Time interval: %is" = "時間間隔：%i秒";
+
+"Time interval: 2s" = "時間間隔：2秒";
+
+"Set Interval" = "間隔の変更";
+
+"Wallpapers" = "複数の壁紙";
+
+"Wallpaper No.%d" = "壁紙 No.%d";
+
+"Add Wallpaper" = "壁紙の追加";
+
+"ups! past the limit" = "壁紙枚数上限に達しました";
+
+"You can put 5 wallpaper only.\ndelete an image so you can put a new one." = "壁紙枚数は5枚までしか配置できません。\n壁紙を変更するには壁紙1枚を削除してください。";
+
+"Widgets were not found.\nPlease download it first and then add it." = "ウィジェットが見つかりませんでした。\nダウンロードしてから追加してください。";
+
+"Reset Settings" = "設定のリセット";
+
+/* ようこそ画面の設定 */
+"Welcome to Airaw" = "Airawへようこそ";
+
+"Airaw is a Tweak to give CarPlay Extension!!" = "AirawはCarPlay拡張機能を提供するための調整です!!";
+
+"Status of support" = "対応状況";
+
+"Applications and settings are fully compatible with iOS14,iOS15 and iOS16." = "AirawはiOS14,iOS15、およびiOS16と完全に互換性があります。";
+
+"Convenient" = "便利さ";
+
+"Customize your CarPlay screen as you like." = "CarPlayの画面を自分の好みに合わせてカスタマイズできるだけでなく、高いカスタマイズ性が提供されています。";
+
+"If you liked the Tweak, help me with a donation by PayPal." = "開発者へのサポートをお願いいたします。Airawが気に入っていただけましたら、PayPalを通じて寄付にご協力いただけますと幸いです。寄付をしていただくことで、さらなるモチベーションが高まり、様々な機能の実装に繋がります。";
+
+"Continue" = "続ける";
+
+"Apply" = "反映";
+
+"If you encounter a bug, don't hesitate to report it! Please include your device and iOS version." = "バグに遭遇した場合は、遠慮なく報告してください！お使いのデバイスとiOSのバージョンを明記をしてご連絡ください。";
+
+"Other Functions" = "その他の機能";
+
+"CarPlay must be restarted for the change to take effect." = "適用するにはCarPlayの再起動が必要です。";
+
+"The generation was successful.\nAdd a transparent icon with CarBridge." = "生成に成功しました。\nCarBridgeで透明アイコンを追加。";
+
+"Success" = "成功";
+
+"Creating icon..." = "アイコン生成中...";
+
+"Please wait" = "しばらくお待ちください";
+
+"Retrieve battery information" = "バッテリー情報を取得する";
+"Retrieve music information" = "ミュージック情報を取得する";
+"Retrieve system information" = "システム情報を取得する";
+"Retrieve statusbar information" = "ステータスバー情報を取得する";
+"Retrieve weather information" = "天気情報を取得する";
+"Retrieve CarPlay information" = "CarPlay情報を取得する";
+"Colors Change" = "色の変更";
+
+"If the Gif animation is too long, it may not be usable." = "GIFアニメーションが長すぎると正常に動作しない可能性があります。";
+
+"Backup restored successfuly\nMust be Respringed for changes to take effect." = "復元に成功しました\n変更が正しく適用されるには再起動が必要です。";
+
+"\n All settings will be restored to default and device will respring. Continue?" = "\n すべての設定がデフォルトに復元され、デバイスが再起動されます。続行しますか？";
+
+"Lock Screen Dimming" = "ロック画面の調光";
+
+"Lock Screen Dimming(Forced)" = "ロック画面の調光(強制)";
+
+"If Lock Screen Dimming does not work, please use the (Forced) version.\nIf it is OFF, the application will not work properly." = "ロック画面の調光、動作しない方は(強制)バージョンをご使用ください。\nこちらがOFFですとアプリが正常に動作しません。";
+
+"Reset Color" = "色のリセット";

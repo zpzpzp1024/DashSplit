@@ -1,0 +1,43 @@
+"Generate transparent icon" = "透明アイコンの生成";
+
+"After generating the transparent icon, add it to CarPlay with CarBridge." = "透明アイコン生成後、CarBridgeを用いて生成した透明アイコンをCarPlayに追加してください。";
+
+"The number of icons : %i" = "アイコンの数 : %i";
+
+"The number of icons : 1" = "アイコンの数 : 1";
+
+"Create Blank Icons" = "透明アイコン生成";
+
+"CarPlay Setings" = "CarPlayの設定";
+
+"Number of CarPlay dashboard app rows" = "CarPlayダッシュボードアプリの行数";
+
+"Number of CarPlay dashboard app columns" = "CarPlayダッシュボードアプリの列数";
+
+"CarPlay dashboard app icon size" = "CarPlayダッシュボードアプリのアイコンサイズ";
+
+"CarPlay dashboard app icon Top offset" = "CarPlayダッシュボードアプリアイコントップオフセット";
+
+"Default Top Offset = 30" = "デフォルトトップオフセット = 30";
+
+"CarPlay dashboard app icon Bottom offset" = "CarPlayダッシュボードアプリアイコンボトムオフセット";
+
+"Default Bottom Offset = -30" = "デフォルトボトムオフセット = -30";
+
+"CarPlay dashboard app icon Left offset" = "CarPlayダッシュボードアプリアイコンレフトオフセット";
+
+"Default left Offset = 20" = "デフォルトレフトオフセット = 20";
+
+"CarPlay dashboard app icon Right offset" = "CarPlayダッシュボードアプリアイコンライトオフセット";
+
+"Default right Offset = 20" = "デフォルトライトオフセット = 20";
+
+"Carplay App Label customize" = "Carplayアプリラベルのカスタマイズ";
+
+"Hide Icon Label" = "アイコンのラベル非表示";
+
+"Hide Label Background" = "ラベルの背景非表示";
+
+"Icon Label Color" = "アイコンラベル色変更";
+
+"Hide Dots" = "ドット非表示";

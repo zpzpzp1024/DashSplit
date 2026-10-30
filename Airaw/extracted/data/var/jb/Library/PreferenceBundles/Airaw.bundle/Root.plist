@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string></string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>AirawDuoTwitterCell</string>
+
+			<key>leftUsername</key>
+			<string>Dcsyhi</string>
+			<key>leftHandle</key>
+			<string>Developer</string>
+			<key>leftProfilePicture</key>
+			<string>linux_n1.png</string>
+			<key>leftOpenURL</key>
+			<string>https://twitter.com/linux_n1</string>
+
+			<key>rightUsername</key>
+			<string>Ouni’sDesigns</string>
+			<key>rightHandle</key>
+			<string>Icon Designer</string>
+			<key>rightProfilePicture</key>
+			<string>OuniDesigns.jpg</string>
+			<key>rightOpenURL</key>
+			<string>https://twitter.com/OuniDesigns</string>
+			<key>height</key>
+			<real>70</real>
+		</dict>
+
+		<!-- *有効or無効 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Enabled / Disable</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>jp.dcsyhi.airaw</string>
+			<key>key</key>
+            <string>kEnabled</string>
+            <key>label</key>
+            <string>Enabled</string>
+		</dict>
+
+		<!-- *アイコンレイアウト -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CarPlay icon customization</string>
+			<key>footerText</key>
+			<string>The second option is used to choose applications to have in full screen mode.</string>
+			<key>id</key>
+			<string>CarBridge_GRP</string>
+		</dict>
+
+		<!-- *Widgets Controller -->
+		<dict>
+			<key>action</key>
+			<string>OpenController:</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>Icon Layout</string>
+			<key>icon</key>
+            <string>AirawIcon/Layout.png</string>
+			<key>id</key>
+			<string>Layout</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>OpenController:</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>App Selection</string>
+			<key>icon</key>
+            <string>AirawIcon/apps.png</string>
+			<key>id</key>
+			<string>CarBridge</string>
+		</dict>
+
+		<!-- *壁紙 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>CarPlay wallpaper customization</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>OpenController:</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>CarPlay Wallpaper</string>
+			<key>icon</key>
+            <string>AirawIcon/CarWallpaper.png</string>
+			<key>id</key>
+			<string>Wallpaper</string>
+		</dict>
+
+		<!-- *ステータスバーの変更 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Status bar customization</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>OpenController:</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>Status Bar</string>
+			<key>icon</key>
+            <string>AirawIcon/StatusBar.png</string>
+			<key>id</key>
+			<string>status_bar</string>
+		</dict>
+
+		<!-- *CarPlayにWidgetsを追加 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Add widgets to CarPlay</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>OpenController:</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>Airaw API</string>
+			<key>icon</key>
+            <string>AirawIcon/API.png</string>
+			<key>id</key>
+			<string>API</string>
+		</dict>
+		<dict>
+			<key>action</key>
+			<string>OpenController:</string>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>Add Widgets</string>
+			<key>icon</key>
+            <string>AirawIcon/Widgets.png</string>
+			<key>id</key>
+			<string>Widgets</string>
+		</dict>
+
+		<!-- *その他の設定 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Other</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>AirawBackupRestore</string>
+			<key>label</key>
+			<string>Backup/Restore</string>
+			<key>icon</key>
+            <string>AirawIcon/Restore.png</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>AirawSpecialThanks</string>
+			<key>label</key>
+			<string>Special Thanks</string>
+			<key>icon</key>
+            <string>AirawIcon/Thanks.png</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>AirawOtherFunc</string>
+			<key>label</key>
+			<string>Other Functions</string>
+			<key>icon</key>
+            <string>AirawIcon/OtherTools.png</string>
+		</dict>
+
+		<!-- *サポート -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Support</string>
+			<key>footerText</key>
+			<string>©️Dcsyhi 2021 - 2024 Airaw v1.6.5</string>
+			<key>id</key>
+			<string>Support</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>redBtnColor</string>
+			<key>action</key>
+			<string>SupportMail</string>
+			<key>alignment</key>
+			<integer>2</integer>
+			<key>label</key>
+			<string>Email Support</string>
+			<key>icon</key>
+            <string>email.png</string>
+			<key>id</key>
+			<string>Support</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>greenBtnColor</string>
+			<key>action</key>
+			<string>PayPalDonate</string>
+			<key>alignment</key>
+			<integer>2</integer>
+			<key>label</key>
+			<string>Donate with PayPal</string>
+			<key>icon</key>
+            <string>paypal.png</string>
+			<key>id</key>
+			<string>Support</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>cellClass</key>
+			<string>blueBtnColor</string>
+			<key>action</key>
+			<string>AddRepo</string>
+			<key>alignment</key>
+			<integer>2</integer>
+			<key>label</key>
+			<string>Developer Repository</string>
+			<key>icon</key>
+            <string>repo.png</string>
+			<key>id</key>
+			<string>Support</string>
+		</dict>
+	</array>
+	<key>title</key>
+	<string></string>
+</dict>
+</plist>

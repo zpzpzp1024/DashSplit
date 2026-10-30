@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Enabled</key>
+	<string>مفعل</string>
+	<key>TIME and Carrier</key>
+	<string>الوقت و المشغل</string>
+	<key>Time Color</key>
+	<string>لون الوقت</string>
+	<key>Carrier Color</key>
+	<string>لون المشغل</string>
+	<key>Color</key>
+	<string>اختيار اللون</string>
+	<key>On Color</key>
+	<string>لون عند التشغيل</string>
+    <key>Off Color</key>
+	<string>لون عند الإيقاف</string>
+    <key>Battery</key>
+	<string>البطارية</string>
+    <key>Body Color</key>
+    <string>لون الهيكل</string>
+    <key>Fill Color</key>
+	<string>لون التعبئة</string>
+    <key>“Pin Color</key>
+	<string>لون الدبوس</string>
+    <key>Bolt Color</key>
+	<string>لون البرق</string>
+</dict>
+</plist>
