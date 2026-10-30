@@ -1429,7 +1429,7 @@ static UIView *gDividers[2];  // up to 2 dividers for 3-pane split
 static UIView *gTestContainer;  // rotated container for landscape test preview
 static BOOL gTestMode;
 static BOOL gTestLandscape;  // tracks the TestLandscape pref of the active test interface
-static UIView *gLockHintLabel;  // "请锁屏手机后显示" banner shown when panes hidden
+static UILabel *gLockHintLabel;  // "请锁屏手机后显示" banner shown when panes hidden
 static UIButton *gToggleButton;
 static int gCurrentPaneCount = 0;  // pane count of the currently active interface
 
