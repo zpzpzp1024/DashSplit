@@ -1095,49 +1095,47 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
     int fitMode = FitMode();
     
     if (fitMode == 2) {
-        // Native fill: hook UIScreen.bounds to return the pane size so the
-        // App lays out its UI at that size — no transform deformation. The
-        // appView frame is set to the pane size (not phone size), and the
-        // content transform is identity.
+        // Native fill — "CarBridge-style" layout without UIScreen.bounds hook.
         //
-        // Per-pane size tracking: each pane gets its own entry in
-        // gNativeFillSizes[]. During FitAppViewToContainer we set
-        // gNativeFillCurrentPane so the hook returns THIS pane's size.
-        // The pane index is recovered from gSlots[].container.
-        int paneIndex = -1;
-        for (int i = 0; i < 3; i++) {
-            if (gSlots[i] && gSlots[i].container == container) {
-                paneIndex = i;
-                break;
-            }
-        }
-        gNativeFillCurrentPane = paneIndex;
-        if (paneIndex >= 0) {
-            gNativeFillSizes[paneIndex] = container.bounds.size;
-        }
-        gNativeFillActive = YES;
+        // The previous approach (hooking UIScreen.bounds per-pane) had a
+        // fundamental problem: UIScreen.bounds is a process-wide global, so
+        // multiple panes with different sizes would clobber each other's
+        // hook value. The async layout passes would read the wrong size.
+        //
+        // New approach: DON'T hook UIScreen.bounds at all. Instead, set the
+        // contentView's bounds to the pane size and force a layout pass.
+        // Most modern iOS Apps use Auto Layout, which is driven by the
+        // superview's bounds — not UIScreen.bounds. By setting the content
+        // container to the pane size and calling layoutIfNeeded, the App's
+        // view hierarchy reflows to fit the pane width. Wider panes get
+        // more spacing (like an iPad layout); narrower panes show a tighter
+        // version of the same UI. No transform deformation, no clipping.
+        //
+        // The appView is also set to the pane size so the App sees a
+        // pane-sized root view. clipsToBounds ensures no overflow.
+        CGFloat paneW = container.bounds.size.width;
+        CGFloat paneH = container.bounds.size.height;
 
-        appView.frame = CGRectMake(0, 0, container.bounds.size.width, container.bounds.size.height);
+        gNativeFillActive = NO;  // do NOT use UIScreen.bounds hook
+
+        appView.frame = CGRectMake(0, 0, paneW, paneH);
+        appView.bounds = CGRectMake(0, 0, paneW, paneH);
         contentView.transform = CGAffineTransformIdentity;
-        contentView.frame = container.bounds;
-        contentView.bounds = CGRectMake(0, 0, container.bounds.size.width, container.bounds.size.height);
-        contentView.center = CGPointMake(container.bounds.size.width / 2.0,
-                                         container.bounds.size.height / 2.0);
-        // Ensure the content container clips so the App's UI doesn't
-        // overflow the pane boundaries.
+        contentView.frame = CGRectMake(0, 0, paneW, paneH);
+        contentView.bounds = CGRectMake(0, 0, paneW, paneH);
+        contentView.center = CGPointMake(paneW / 2.0, paneH / 2.0);
         contentView.clipsToBounds = YES;
-        CLog(@"fit: native fill pane=%@ idx=%d hook=ON appView=%@ contentView=%@ container=%@",
-             NSStringFromCGSize(container.bounds.size), paneIndex,
+        appView.clipsToBounds = YES;
+
+        CLog(@"fit: native fill(layout) pane=%@ appView=%@ contentView=%@ container=%@",
+             NSStringFromCGSize(container.bounds.size),
              NSStringFromCGRect(appView.frame),
              NSStringFromCGRect(contentView.frame),
              NSStringFromCGRect(container.frame));
-        // Log the view hierarchy depth for diagnostics.
         CLog(@"fit: native fill appView.subviews=%d contentView.subviews=%d",
              (int)appView.subviews.count,
              (int)contentView.subviews.count);
-        // Force a synchronous layout pass NOW while gNativeFillCurrentPane
-        // still points to this pane — the App reads UIScreen.bounds
-        // during layout and must see THIS pane's size, not another's.
+        // Force a synchronous layout pass so the App reflows NOW.
         [contentView layoutIfNeeded];
         [appView layoutIfNeeded];
     } else if (fitMode == 1) {
