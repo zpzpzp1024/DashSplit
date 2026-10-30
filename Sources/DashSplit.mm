@@ -1004,21 +1004,27 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
     Call0(viewController, @"_createSceneViewController");
     
     // Set the scene's content reference size to the pane size BEFORE applying
-    // display mode. The private method _updateReferenceSize:andOrientation: on
-    // SBDeviceApplicationSceneView tells the scene to lay out at the given
-    // dimensions — discovered via method enumeration on the device.
-    // This is the SpringBoard-native equivalent of CarBridge's
-    // setContentReferenceSize:withInterfaceOrientation:.
+    // display mode. In com.apple.CarPlayApp process, setContentReferenceSize:
+    // withInterfaceOrientation: is available on SBDeviceApplicationSceneView
+    // (confirmed via CarBridge dylib analysis). In SpringBoard, only
+    // _updateReferenceSize:andOrientation: is available. Try both.
     if (FitMode() == 2 && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
         id sceneView = Call0(viewController, @"appView");
         if (sceneView) {
-            SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
+            SEL refSizeSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
             if ([sceneView respondsToSelector:refSizeSel]) {
                 NSInteger orientation = 1; // UIInterfaceOrientationPortrait
                 ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
-                CLog(@"host: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
+                CLog(@"host: setContentReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
             } else {
-                CLog(@"host: _updateReferenceSize:andOrientation: NOT available on %@", NSStringFromClass([sceneView class]));
+                SEL updateRefSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
+                if ([sceneView respondsToSelector:updateRefSel]) {
+                    NSInteger orientation = 1;
+                    ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, updateRefSel, paneSize, orientation);
+                    CLog(@"host: _updateReferenceSize:%@ orientation=%d (fallback)", NSStringFromCGSize(paneSize), (int)orientation);
+                } else {
+                    CLog(@"host: no reference size API available on %@", NSStringFromClass([sceneView class]));
+                }
             }
         }
     }
@@ -1184,15 +1190,18 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         CGSize paneSize = CGSizeMake(paneW, paneH);
 
         // Set the scene's content reference size to the pane dimensions.
-        // _updateReferenceSize:andOrientation: is the SpringBoard-native
-        // method on SBDeviceApplicationSceneView that tells the scene to
-        // lay out at the given size.
+        // Try setContentReferenceSize:withInterfaceOrientation: first
+        // (available in CarPlayApp process), fall back to
+        // _updateReferenceSize:andOrientation: (available in SpringBoard).
         if (sceneView) {
-            SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
-            if ([sceneView respondsToSelector:refSizeSel]) {
+            SEL cbSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
+            SEL sbSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
+            SEL useSel = [sceneView respondsToSelector:cbSel] ? cbSel :
+                          ([sceneView respondsToSelector:sbSel] ? sbSel : NULL);
+            if (useSel) {
                 NSInteger orientation = 1; // UIInterfaceOrientationPortrait
-                ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
-                CLog(@"fit: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
+                ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, useSel, paneSize, orientation);
+                CLog(@"fit: %s:%@ orientation=%d", sel_getName(useSel), NSStringFromCGSize(paneSize), (int)orientation);
             }
         }
 
