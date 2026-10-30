@@ -2293,13 +2293,19 @@ static BOOL Disabled(void)
 
 static BOOL CarScreenConnected(void)
 {
-    for (UIScreen *screen in [UIScreen screens]) {
-        if (BoolReturn(screen, @"_isCarScreen", NO) || BoolReturn(screen, @"_isCarPlayScreen", NO)) {
-            return YES;
+    @try {
+        UIScreen *main = [UIScreen mainScreen];
+        if (!main) return NO;
+        for (UIScreen *screen in [UIScreen screens]) {
+            if (BoolReturn(screen, @"_isCarScreen", NO) || BoolReturn(screen, @"_isCarPlayScreen", NO)) {
+                return YES;
+            }
+            if (![main isEqual:screen] && screen.bounds.size.width != main.bounds.size.width) {
+                return YES;
+            }
         }
-        if (![[UIScreen mainScreen] isEqual:screen] && screen.bounds.size.width != [UIScreen mainScreen].bounds.size.width) {
-            return YES;
-        }
+    } @catch (NSException *e) {
+        CLog(@"carScreen: threw %@", e.reason);
     }
     return NO;
 }
@@ -2490,99 +2496,9 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.43-carplayapp loaded ---");
+        CLog(@"--- DashSplit 0.1.44-carplayapp loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
-        
-        // Probe: check what APIs are available in this process.
-        // In com.apple.CarPlayApp, SBAppViewController and related classes
-        // may have different methods than in SpringBoard.
-        Class sbAppVC = NSClassFromString(@"SBAppViewController");
-        CLog(@"probe: SBAppViewController=%@", sbAppVC ? NSStringFromClass(sbAppVC) : @"NOT FOUND");
-        
-        // CarBridge key: interceptUpdateForScene:withNewSettings:
-        if (sbAppVC) {
-            SEL interceptSel = NSSelectorFromString(@"interceptUpdateForScene:withNewSettings:");
-            CLog(@"probe: interceptUpdateForScene:withNewSettings: = %d", [sbAppVC instancesRespondToSelector:interceptSel]);
-            
-            // Dump all methods containing "intercept", "scene", "settings", "reference" on SBAppViewController
-            unsigned int methodCount = 0;
-            Method *methods = class_copyMethodList(sbAppVC, &methodCount);
-            for (unsigned int i = 0; i < methodCount; i++) {
-                const char *name = sel_getName(method_getName(methods[i]));
-                if (strstr(name, "intercept") || strstr(name, "ntercept") || 
-                    strstr(name, "eferenceSize") || strstr(name, "ontentReference")) {
-                    CLog(@"probe: SBAppVC method: %s", name);
-                }
-            }
-            free(methods);
-        }
-        
-        // Check UIMutableApplicationSceneSettings
-        Class mutableSettings = NSClassFromString(@"UIMutableApplicationSceneSettings");
-        CLog(@"probe: UIMutableApplicationSceneSettings=%d", mutableSettings != nil);
-        if (mutableSettings) {
-            SEL refSizeSel = NSSelectorFromString(@"setReferenceContentSize:");
-            CLog(@"probe: UIMutableAppSceneSettings setReferenceContentSize: = %d", [mutableSettings instancesRespondToSelector:refSizeSel]);
-            SEL contentRefSel = NSSelectorFromString(@"setContentReferenceSize:");
-            CLog(@"probe: UIMutableAppSceneSettings setContentReferenceSize: = %d", [mutableSettings instancesRespondToSelector:contentRefSel]);
-            
-            // Dump all size-related methods
-            unsigned int methodCount = 0;
-            Method *methods = class_copyMethodList(mutableSettings, &methodCount);
-            for (unsigned int i = 0; i < methodCount; i++) {
-                const char *name = sel_getName(method_getName(methods[i]));
-                if (strstr(name, "ize") || strstr(name, "eference") || strstr(name, "ontent") || strstr(name, "rame")) {
-                    CLog(@"probe: UIMutableAppSceneSettings method: %s", name);
-                }
-            }
-            free(methods);
-        }
-        
-        Class sbSceneView = NSClassFromString(@"SBDeviceApplicationSceneView");
-        CLog(@"probe: SBDeviceApplicationSceneView=%@", sbSceneView ? NSStringFromClass(sbSceneView) : @"NOT FOUND");
-        
-        if (sbSceneView) {
-            SEL refSizeSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
-            CLog(@"probe: setContentReferenceSize:withInterfaceOrientation: = %d", [sbSceneView instancesRespondToSelector:refSizeSel]);
-            
-            SEL updateRefSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
-            CLog(@"probe: _updateReferenceSize:andOrientation: = %d", [sbSceneView instancesRespondToSelector:updateRefSel]);
-            
-            // Dump all methods with "reference", "size", "content", "frame"
-            unsigned int methodCount = 0;
-            Method *methods = class_copyMethodList(sbSceneView, &methodCount);
-            for (unsigned int i = 0; i < methodCount; i++) {
-                const char *name = sel_getName(method_getName(methods[i]));
-                if (strstr(name, "eference") || strstr(name, "ontentRef") || strstr(name, "ize")) {
-                    CLog(@"probe: SBDeviceAppSceneView method: %s", name);
-                }
-            }
-            free(methods);
-        }
-        
-        // Check SBDeviceApplicationSceneViewController (CarBridge uses this)
-        Class sbSceneVC = NSClassFromString(@"SBDeviceApplicationSceneViewController");
-        CLog(@"probe: SBDeviceApplicationSceneViewController=%d", sbSceneVC != nil);
-        
-        Class sceneManagerCoordinator = NSClassFromString(@"SBSceneManagerCoordinator");
-        CLog(@"probe: SBSceneManagerCoordinator=%d", sceneManagerCoordinator != nil);
-        
-        Class sbAppController = NSClassFromString(@"SBApplicationController");
-        CLog(@"probe: SBApplicationController=%d", sbAppController != nil);
-        
-        Class sbEntity = NSClassFromString(@"SBDeviceApplicationSceneEntity");
-        CLog(@"probe: SBDeviceApplicationSceneEntity=%d", sbEntity != nil);
-        
-        // Check CarPlay display availability
-        Class avExternalDevice = NSClassFromString(@"AVExternalDevice");
-        CLog(@"probe: AVExternalDevice=%d", avExternalDevice != nil);
-        
-        // Check UIScreen
-        CLog(@"probe: UIScreen mainScreen bounds=%@", NSStringFromCGRect([UIScreen mainScreen].bounds));
-        
-        // Check if we can create a window
-        CLog(@"probe: process name=%@", [[NSProcessInfo processInfo] processName]);
         
         // Read crash count from last session.
         NSString *crashCountText = [NSString stringWithContentsOfFile:@COCKPIT_CRASHCOUNT encoding:NSUTF8StringEncoding error:nil];
@@ -2596,6 +2512,13 @@ static void DashSplitInit(void)
             }
         }
         
+        // CRITICAL: All UIKit-dependent code (including [UIScreen mainScreen])
+        // MUST run AFTER UIKit is fully initialized. In com.apple.CarPlayApp,
+        // calling [UIScreen mainScreen] during the constructor (__attribute__
+        // ((constructor)) / dyld init) throws NSInternalInconsistencyException
+        // "returning nil screen from mainScreen is not allowed!" which crashes
+        // the process and breaks CarPlay connectivity entirely. Defer
+        // everything to a dispatch_after on the main queue.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             if (FileExists(@COCKPIT_TEST)) {
                 [[NSFileManager defaultManager] removeItemAtPath:@COCKPIT_TEST error:nil];
@@ -2615,6 +2538,92 @@ static void DashSplitInit(void)
                 CFPreferencesAppSynchronize(CFSTR("lilliana.dashsplit"));
                 CLog(@"init: one-time test-mode reset applied (default OFF)");
             }
+            
+            // --- Probes (safe to run now: UIKit is initialized) ---
+            Class sbAppVC = NSClassFromString(@"SBAppViewController");
+            CLog(@"probe: SBAppViewController=%@", sbAppVC ? NSStringFromClass(sbAppVC) : @"NOT FOUND");
+            
+            if (sbAppVC) {
+                SEL interceptSel = NSSelectorFromString(@"interceptUpdateForScene:withNewSettings:");
+                CLog(@"probe: interceptUpdateForScene:withNewSettings: = %d", [sbAppVC instancesRespondToSelector:interceptSel]);
+                
+                unsigned int methodCount = 0;
+                Method *methods = class_copyMethodList(sbAppVC, &methodCount);
+                for (unsigned int i = 0; i < methodCount; i++) {
+                    const char *name = sel_getName(method_getName(methods[i]));
+                    if (strstr(name, "intercept") || strstr(name, "ntercept") || 
+                        strstr(name, "eferenceSize") || strstr(name, "ontentReference")) {
+                        CLog(@"probe: SBAppVC method: %s", name);
+                    }
+                }
+                free(methods);
+            }
+            
+            Class mutableSettings = NSClassFromString(@"UIMutableApplicationSceneSettings");
+            CLog(@"probe: UIMutableApplicationSceneSettings=%d", mutableSettings != nil);
+            if (mutableSettings) {
+                SEL refSizeSel = NSSelectorFromString(@"setReferenceContentSize:");
+                CLog(@"probe: UIMutableAppSceneSettings setReferenceContentSize: = %d", [mutableSettings instancesRespondToSelector:refSizeSel]);
+                SEL contentRefSel = NSSelectorFromString(@"setContentReferenceSize:");
+                CLog(@"probe: UIMutableAppSceneSettings setContentReferenceSize: = %d", [mutableSettings instancesRespondToSelector:contentRefSel]);
+                
+                unsigned int methodCount = 0;
+                Method *methods = class_copyMethodList(mutableSettings, &methodCount);
+                for (unsigned int i = 0; i < methodCount; i++) {
+                    const char *name = sel_getName(method_getName(methods[i]));
+                    if (strstr(name, "ize") || strstr(name, "eference") || strstr(name, "ontent") || strstr(name, "rame")) {
+                        CLog(@"probe: UIMutableAppSceneSettings method: %s", name);
+                    }
+                }
+                free(methods);
+            }
+            
+            Class sbSceneView = NSClassFromString(@"SBDeviceApplicationSceneView");
+            CLog(@"probe: SBDeviceApplicationSceneView=%@", sbSceneView ? NSStringFromClass(sbSceneView) : @"NOT FOUND");
+            
+            if (sbSceneView) {
+                SEL refSizeSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
+                CLog(@"probe: setContentReferenceSize:withInterfaceOrientation: = %d", [sbSceneView instancesRespondToSelector:refSizeSel]);
+                
+                SEL updateRefSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
+                CLog(@"probe: _updateReferenceSize:andOrientation: = %d", [sbSceneView instancesRespondToSelector:updateRefSel]);
+                
+                unsigned int methodCount = 0;
+                Method *methods = class_copyMethodList(sbSceneView, &methodCount);
+                for (unsigned int i = 0; i < methodCount; i++) {
+                    const char *name = sel_getName(method_getName(methods[i]));
+                    if (strstr(name, "eference") || strstr(name, "ontentRef") || strstr(name, "ize")) {
+                        CLog(@"probe: SBDeviceAppSceneView method: %s", name);
+                    }
+                }
+                free(methods);
+            }
+            
+            Class sbSceneVC = NSClassFromString(@"SBDeviceApplicationSceneViewController");
+            CLog(@"probe: SBDeviceApplicationSceneViewController=%d", sbSceneVC != nil);
+            
+            Class sceneManagerCoordinator = NSClassFromString(@"SBSceneManagerCoordinator");
+            CLog(@"probe: SBSceneManagerCoordinator=%d", sceneManagerCoordinator != nil);
+            
+            Class sbAppController = NSClassFromString(@"SBApplicationController");
+            CLog(@"probe: SBApplicationController=%d", sbAppController != nil);
+            
+            Class sbEntity = NSClassFromString(@"SBDeviceApplicationSceneEntity");
+            CLog(@"probe: SBDeviceApplicationSceneEntity=%d", sbEntity != nil);
+            
+            Class avExternalDevice = NSClassFromString(@"AVExternalDevice");
+            CLog(@"probe: AVExternalDevice=%d", avExternalDevice != nil);
+            
+            // UIScreen mainScreen — wrapped in @try/@catch because in
+            // com.apple.CarPlayApp this can still be nil in edge cases.
+            @try {
+                CLog(@"probe: UIScreen mainScreen bounds=%@", NSStringFromCGRect([UIScreen mainScreen].bounds));
+            } @catch (NSException *e) {
+                CLog(@"probe: UIScreen mainScreen threw: %@", e.reason);
+            }
+            
+            CLog(@"probe: process name=%@", [[NSProcessInfo processInfo] processName]);
+            
             InstallSceneDiffHook();
             InstallUIScreenHook();
             InstallLockStateObserver();
