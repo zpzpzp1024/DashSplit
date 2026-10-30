@@ -1003,22 +1003,22 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
     
     Call0(viewController, @"_createSceneViewController");
     
-    // CarBridge-style: set the scene's content reference size to the pane
-    // size BEFORE applying display mode. This makes the App's scene lay out
-    // at the pane dimensions from the very start — like CarBridge does in
-    // fullscreen mode. The method setContentReferenceSize:withInterfaceOrientation:
-    // is on SBApplicationSceneView (the appView), discovered via CarBridge
-    // reverse engineering.
+    // Set the scene's content reference size to the pane size BEFORE applying
+    // display mode. The private method _updateReferenceSize:andOrientation: on
+    // SBDeviceApplicationSceneView tells the scene to lay out at the given
+    // dimensions — discovered via method enumeration on the device.
+    // This is the SpringBoard-native equivalent of CarBridge's
+    // setContentReferenceSize:withInterfaceOrientation:.
     if (FitMode() == 2 && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
         id sceneView = Call0(viewController, @"appView");
         if (sceneView) {
-            SEL refSizeSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
+            SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
             if ([sceneView respondsToSelector:refSizeSel]) {
                 NSInteger orientation = 1; // UIInterfaceOrientationPortrait
                 ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
-                CLog(@"host: setContentReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
+                CLog(@"host: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
             } else {
-                CLog(@"host: setContentReferenceSize:withInterfaceOrientation: NOT available on %@", NSStringFromClass([sceneView class]));
+                CLog(@"host: _updateReferenceSize:andOrientation: NOT available on %@", NSStringFromClass([sceneView class]));
             }
         }
     }
@@ -1183,13 +1183,16 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         CGFloat paneH = container.bounds.size.height;
         CGSize paneSize = CGSizeMake(paneW, paneH);
 
-        // CarBridge-style: set content reference size on the scene view.
+        // Set the scene's content reference size to the pane dimensions.
+        // _updateReferenceSize:andOrientation: is the SpringBoard-native
+        // method on SBDeviceApplicationSceneView that tells the scene to
+        // lay out at the given size.
         if (sceneView) {
-            SEL refSizeSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
+            SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
             if ([sceneView respondsToSelector:refSizeSel]) {
                 NSInteger orientation = 1; // UIInterfaceOrientationPortrait
                 ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
-                CLog(@"fit: setContentReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
+                CLog(@"fit: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
             }
         }
 
@@ -2331,7 +2334,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.39 loaded ---");
+        CLog(@"--- DashSplit 0.1.40 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
