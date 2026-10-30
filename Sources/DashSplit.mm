@@ -930,6 +930,10 @@ static void DashSplitSceneDidUpdate(id self, SEL _cmd, id scene, id diff, id old
     }
 }
 
+// Forward declarations for the intercept hook (defined below).
+static IMP gOrigInterceptUpdate = NULL;
+static void DashSplitInterceptUpdate(id self, SEL _cmd, id scene, id newSettings);
+
 static void InstallSceneDiffHook(void)
 {
     static BOOL installed = NO;
@@ -945,6 +949,104 @@ static void InstallSceneDiffHook(void)
         CLog(@"preempt: SBMainDisplaySceneManager diff hook installed");
     } else {
         CLog(@"preempt: hook unavailable (ms=%d class=%d)", hookMessage != NULL, managerClass != nil);
+    }
+    
+    // CarBridge-style: hook interceptUpdateForScene:withNewSettings: on
+    // SBAppViewController to inject our pane referenceSize into the scene
+    // settings BEFORE the system applies them. This is the critical piece
+    // CarBridge uses to make apps lay out at the pane dimensions instead of
+    // the full screen size.
+    Class vcClass = NSClassFromString(@"SBAppViewController");
+    SEL interceptSel = NSSelectorFromString(@"interceptUpdateForScene:withNewSettings:");
+    if (hookMessage && vcClass && class_getInstanceMethod(vcClass, interceptSel)) {
+        hookMessage(vcClass, interceptSel, (void *)DashSplitInterceptUpdate, (void **)&gOrigInterceptUpdate);
+        CLog(@"intercept: SBAppViewController interceptUpdateForScene:withNewSettings: hook installed");
+    } else {
+        CLog(@"intercept: interceptUpdateForScene unavailable (class=%d)", vcClass != nil);
+    }
+}
+
+#pragma mark - Scene settings interception (CarBridge approach)
+
+// CarBridge hooks interceptUpdateForScene:withNewSettings: on SBAppViewController
+// to modify the UIMutableApplicationSceneSettings BEFORE the system applies them.
+// We inject our pane's referenceSize so the App's scene lays out at pane
+// dimensions from the very start, instead of getting a 414x896 reference and
+// being cropped to half.
+//
+// The key insight from CarBridge's binary: it uses
+//   - interceptUpdateForScene:withNewSettings:
+//   - UIMutableApplicationSceneSettings
+//   - setContentReferenceSize:withInterfaceOrientation:
+//   - toApplicationSceneEntities
+// to control the scene's reference size at creation time, not after.
+
+// Track the pane size that should be injected for each hosted bundle ID.
+// Updated by ConfigureAppViewController when a slot is created.
+static NSMutableDictionary<NSString *, NSValue *> *gPaneSizeMap;
+
+static void RegisterPaneSize(NSString *bundleID, CGSize size)
+{
+    if (!gPaneSizeMap) gPaneSizeMap = [NSMutableDictionary dictionary];
+    if (CGSizeEqualToSize(size, CGSizeZero)) {
+        [gPaneSizeMap removeObjectForKey:bundleID];
+    } else {
+        gPaneSizeMap[bundleID] = [NSValue valueWithCGSize:size];
+    }
+}
+
+static CGSize PaneSizeForScene(id scene)
+{
+    if (!scene) return CGSizeZero;
+    // Try to match scene to a hosted bundle ID via its identifier.
+    NSString *sceneID = Call0(scene, @"sceneIdentifier");
+    if (![sceneID isKindOfClass:[NSString class]]) sceneID = Call0(scene, @"identifier");
+    if (sceneID && gPaneSizeMap) {
+        for (NSString *bid in gPaneSizeMap) {
+            if ([sceneID containsString:bid]) {
+                NSValue *val = gPaneSizeMap[bid];
+                if (val) return [val CGSizeValue];
+            }
+        }
+    }
+    // Fallback: if only one slot is hosted, return its size.
+    int count = PaneCount();
+    if (count == 1 && gSlots[0] && gSlots[0].container) {
+        return gSlots[0].container.bounds.size;
+    }
+    return CGSizeZero;
+}
+
+static void DashSplitInterceptUpdate(id self, SEL _cmd, id scene, id newSettings)
+{
+    @try {
+        CGSize paneSize = PaneSizeForScene(scene);
+        if (!CGSizeEqualToSize(paneSize, CGSizeZero) && newSettings) {
+            // Modify the settings object to set our referenceSize.
+            // UIMutableApplicationSceneSettings has a setReferenceContentSize:
+            // method (or similar). Try multiple known selectors.
+            SEL refSizeSel = NSSelectorFromString(@"setReferenceContentSize:");
+            if ([newSettings respondsToSelector:refSizeSel]) {
+                ((void (*)(id, SEL, CGSize))objc_msgSend)(newSettings, refSizeSel, paneSize);
+                CLog(@"intercept: set referenceContentSize=%@ on %@", NSStringFromCGSize(paneSize), NSStringFromClass([newSettings class]));
+            }
+            // Also try setContentReferenceSize:
+            SEL contentRefSel = NSSelectorFromString(@"setContentReferenceSize:");
+            if ([newSettings respondsToSelector:contentRefSel]) {
+                ((void (*)(id, SEL, CGSize))objc_msgSend)(newSettings, contentRefSel, paneSize);
+                CLog(@"intercept: set contentReferenceSize=%@ on %@", NSStringFromCGSize(paneSize), NSStringFromClass([newSettings class]));
+            }
+            // Try setInterfaceOrientation: to portrait
+            SEL orientSel = NSSelectorFromString(@"setInterfaceOrientation:");
+            if ([newSettings respondsToSelector:orientSel]) {
+                ((void (*)(id, SEL, NSInteger))objc_msgSend)(newSettings, orientSel, 1); // UIInterfaceOrientationPortrait
+            }
+        }
+    } @catch (NSException *exception) {
+        CLog(@"intercept: threw %@: %@", exception.name, exception.reason);
+    }
+    if (gOrigInterceptUpdate) {
+        ((void (*)(id, SEL, id, id))gOrigInterceptUpdate)(self, _cmd, scene, newSettings);
     }
 }
 
@@ -975,6 +1077,14 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
 {
     (void)application;
     
+    // Register the pane size so the interceptUpdateForScene hook can inject
+    // it into the scene settings. Use the bundle ID as the key.
+    NSString *bid = Call0(application, @"bundleIdentifier");
+    if (bid && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
+        RegisterPaneSize(bid, paneSize);
+        CLog(@"host: registered paneSize=%@ for %@", NSStringFromCGSize(paneSize), bid);
+    }
+    
     SEL ignoresSel = NSSelectorFromString(@"setIgnoresOcclusions:");
     if ([viewController respondsToSelector:ignoresSel]) {
         ((void (*)(id, SEL, BOOL))objc_msgSend)(viewController, ignoresSel, YES);
@@ -986,6 +1096,32 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
     id activationSettings = Call0(viewController, @"_activationSettings");
     if (activationSettings) {
         Call0(activationSettings, @"clearActivationSettings");
+    }
+    
+    // Try to modify the activation settings' referenceSize BEFORE creating
+    // the transaction. CarBridge uses UIMutableApplicationSceneSettings to
+    // inject the desired referenceSize into the scene's settings diff.
+    if (activationSettings && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
+        SEL refSizeSel = NSSelectorFromString(@"setReferenceContentSize:");
+        if ([activationSettings respondsToSelector:refSizeSel]) {
+            ((void (*)(id, SEL, CGSize))objc_msgSend)(activationSettings, refSizeSel, paneSize);
+            CLog(@"host: set referenceContentSize=%@ on activationSettings", NSStringFromCGSize(paneSize));
+        }
+        SEL contentRefSel = NSSelectorFromString(@"setContentReferenceSize:");
+        if ([activationSettings respondsToSelector:contentRefSel]) {
+            ((void (*)(id, SEL, CGSize))objc_msgSend)(activationSettings, contentRefSel, paneSize);
+            CLog(@"host: set contentReferenceSize=%@ on activationSettings", NSStringFromCGSize(paneSize));
+        }
+    }
+    
+    // Also try modifying the entity's settings via toApplicationSceneEntities.
+    // CarBridge calls this to convert settings into scene entities with the
+    // desired referenceSize applied.
+    if (entity && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
+        SEL toEntitiesSel = NSSelectorFromString(@"toApplicationSceneEntities");
+        if ([entity respondsToSelector:toEntitiesSel]) {
+            CLog(@"host: entity responds to toApplicationSceneEntities");
+        }
     }
     
     SEL transactionSel = NSSelectorFromString(@"_createSceneUpdateTransactionForApplicationSceneEntity:deliveringActions:");
@@ -2354,7 +2490,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.42-carplayapp loaded ---");
+        CLog(@"--- DashSplit 0.1.43-carplayapp loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
@@ -2363,6 +2499,45 @@ static void DashSplitInit(void)
         // may have different methods than in SpringBoard.
         Class sbAppVC = NSClassFromString(@"SBAppViewController");
         CLog(@"probe: SBAppViewController=%@", sbAppVC ? NSStringFromClass(sbAppVC) : @"NOT FOUND");
+        
+        // CarBridge key: interceptUpdateForScene:withNewSettings:
+        if (sbAppVC) {
+            SEL interceptSel = NSSelectorFromString(@"interceptUpdateForScene:withNewSettings:");
+            CLog(@"probe: interceptUpdateForScene:withNewSettings: = %d", [sbAppVC instancesRespondToSelector:interceptSel]);
+            
+            // Dump all methods containing "intercept", "scene", "settings", "reference" on SBAppViewController
+            unsigned int methodCount = 0;
+            Method *methods = class_copyMethodList(sbAppVC, &methodCount);
+            for (unsigned int i = 0; i < methodCount; i++) {
+                const char *name = sel_getName(method_getName(methods[i]));
+                if (strstr(name, "intercept") || strstr(name, "ntercept") || 
+                    strstr(name, "eferenceSize") || strstr(name, "ontentReference")) {
+                    CLog(@"probe: SBAppVC method: %s", name);
+                }
+            }
+            free(methods);
+        }
+        
+        // Check UIMutableApplicationSceneSettings
+        Class mutableSettings = NSClassFromString(@"UIMutableApplicationSceneSettings");
+        CLog(@"probe: UIMutableApplicationSceneSettings=%d", mutableSettings != nil);
+        if (mutableSettings) {
+            SEL refSizeSel = NSSelectorFromString(@"setReferenceContentSize:");
+            CLog(@"probe: UIMutableAppSceneSettings setReferenceContentSize: = %d", [mutableSettings instancesRespondToSelector:refSizeSel]);
+            SEL contentRefSel = NSSelectorFromString(@"setContentReferenceSize:");
+            CLog(@"probe: UIMutableAppSceneSettings setContentReferenceSize: = %d", [mutableSettings instancesRespondToSelector:contentRefSel]);
+            
+            // Dump all size-related methods
+            unsigned int methodCount = 0;
+            Method *methods = class_copyMethodList(mutableSettings, &methodCount);
+            for (unsigned int i = 0; i < methodCount; i++) {
+                const char *name = sel_getName(method_getName(methods[i]));
+                if (strstr(name, "ize") || strstr(name, "eference") || strstr(name, "ontent") || strstr(name, "rame")) {
+                    CLog(@"probe: UIMutableAppSceneSettings method: %s", name);
+                }
+            }
+            free(methods);
+        }
         
         Class sbSceneView = NSClassFromString(@"SBDeviceApplicationSceneView");
         CLog(@"probe: SBDeviceApplicationSceneView=%@", sbSceneView ? NSStringFromClass(sbSceneView) : @"NOT FOUND");
@@ -2373,7 +2548,22 @@ static void DashSplitInit(void)
             
             SEL updateRefSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
             CLog(@"probe: _updateReferenceSize:andOrientation: = %d", [sbSceneView instancesRespondToSelector:updateRefSel]);
+            
+            // Dump all methods with "reference", "size", "content", "frame"
+            unsigned int methodCount = 0;
+            Method *methods = class_copyMethodList(sbSceneView, &methodCount);
+            for (unsigned int i = 0; i < methodCount; i++) {
+                const char *name = sel_getName(method_getName(methods[i]));
+                if (strstr(name, "eference") || strstr(name, "ontentRef") || strstr(name, "ize")) {
+                    CLog(@"probe: SBDeviceAppSceneView method: %s", name);
+                }
+            }
+            free(methods);
         }
+        
+        // Check SBDeviceApplicationSceneViewController (CarBridge uses this)
+        Class sbSceneVC = NSClassFromString(@"SBDeviceApplicationSceneViewController");
+        CLog(@"probe: SBDeviceApplicationSceneViewController=%d", sbSceneVC != nil);
         
         Class sceneManagerCoordinator = NSClassFromString(@"SBSceneManagerCoordinator");
         CLog(@"probe: SBSceneManagerCoordinator=%d", sceneManagerCoordinator != nil);
