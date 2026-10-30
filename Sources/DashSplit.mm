@@ -971,7 +971,7 @@ static void ApplyDisplayMode4(id viewController)
 // based revert (isRunning stays 0 on this device even while content renders,
 // and the revert killed working displays ~8s in). Recovery is the health
 // check's job: nudge, then re-host.
-static void ConfigureAppViewController(id viewController, id entity, id application)
+static void ConfigureAppViewController(id viewController, id entity, id application, CGSize paneSize)
 {
     (void)application;
     
@@ -1002,6 +1002,26 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
     }
     
     Call0(viewController, @"_createSceneViewController");
+    
+    // CarBridge-style: set the scene's content reference size to the pane
+    // size BEFORE applying display mode. This makes the App's scene lay out
+    // at the pane dimensions from the very start — like CarBridge does in
+    // fullscreen mode. The method setContentReferenceSize:withInterfaceOrientation:
+    // is on SBApplicationSceneView (the appView), discovered via CarBridge
+    // reverse engineering.
+    if (FitMode() == 2 && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
+        id sceneView = Call0(viewController, @"appView");
+        if (sceneView) {
+            SEL refSizeSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
+            if ([sceneView respondsToSelector:refSizeSel]) {
+                NSInteger orientation = 1; // UIInterfaceOrientationPortrait
+                ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
+                CLog(@"host: setContentReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
+            } else {
+                CLog(@"host: setContentReferenceSize:withInterfaceOrientation: NOT available on %@", NSStringFromClass([sceneView class]));
+            }
+        }
+    }
     
     ApplyDisplayMode4(viewController);
     CLog(@"host: displayMode 4 applied");
@@ -1101,19 +1121,18 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
     int fitMode = FitMode();
     
     if (fitMode == 2) {
-        // Native fill — hook UIScreen.bounds + contentView bounds + layout.
+        // Native fill — CarBridge-style scene content reference size +
+        // UIScreen.bounds hook + contentView bounds + layout.
         //
         // The App's internal layout engine reads UIScreen.bounds (NOT the
         // superview bounds) to determine its root view size. Without the
-        // hook, the App lays out at 414x896 (phone) and gets cropped —
-        // confirmed by logs showing contentView.subviews at pane size but
-        // the App's inner UI still at phone size.
+        // hook, the App lays out at 414x896 (phone) and gets cropped.
         //
-        // Solution: hook UIScreen.bounds to return the pane size so the
-        // App reflows to pane dimensions — like CarBridge does in fullscreen.
-        // For multi-pane, gNativeFillCurrentPane tracks which pane is being
-        // fitted so the hook returns the right size during layoutIfNeeded.
-        // Between explicit fit calls, the hook returns the last pane's size.
+        // CarBridge approach: call setContentReferenceSize:withInterfaceOrientation:
+        // on the SBApplicationSceneView to set the scene's content reference
+        // size to the pane dimensions, so the App lays out at pane size from
+        // the start. Also hook UIScreen.bounds as a fallback for apps that
+        // read it directly.
         int paneIndex = -1;
         for (int i = 0; i < 3; i++) {
             if (gSlots[i] && gSlots[i].container == container) {
@@ -1128,6 +1147,27 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
 
         CGFloat paneW = container.bounds.size.width;
         CGFloat paneH = container.bounds.size.height;
+        CGSize paneSize = CGSizeMake(paneW, paneH);
+
+        // CarBridge-style: set content reference size on the scene view.
+        if (sceneView) {
+            SEL refSizeSel = NSSelectorFromString(@"setContentReferenceSize:withInterfaceOrientation:");
+            if ([sceneView respondsToSelector:refSizeSel]) {
+                NSInteger orientation = 1; // UIInterfaceOrientationPortrait
+                ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
+                CLog(@"fit: setContentReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
+            }
+        }
+
+        // Also try setAppFrame: on the device controller (CarBridge uses this).
+        if (deviceController) {
+            SEL appFrameSel = NSSelectorFromString(@"setAppFrame:");
+            if ([deviceController respondsToSelector:appFrameSel]) {
+                CGRect appFrame = CGRectMake(0, 0, paneW, paneH);
+                ((void (*)(id, SEL, CGRect))objc_msgSend)(deviceController, appFrameSel, appFrame);
+                CLog(@"fit: setAppFrame:%@", NSStringFromCGRect(appFrame));
+            }
+        }
 
         appView.frame = CGRectMake(0, 0, paneW, paneH);
         appView.bounds = CGRectMake(0, 0, paneW, paneH);
@@ -1351,7 +1391,7 @@ static HostSlot *HostApplication(NSString *bundleID, UIView *container, int slot
     }
     slot.viewController = viewController;
     
-    ConfigureAppViewController(viewController, entity, application);
+    ConfigureAppViewController(viewController, entity, application, container.bounds.size);
     
     UIView *appView = Call0(viewController, @"view");
     if (!appView) {
@@ -2257,7 +2297,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.37 loaded ---");
+        CLog(@"--- DashSplit 0.1.38 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
