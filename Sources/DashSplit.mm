@@ -1016,21 +1016,27 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
 // is YES, so non-native modes are zero-cost (the original is called directly).
 static BOOL gNativeFillActive = NO;
 static CGSize gNativeFillSizes[3] = {CGSizeZero, CGSizeZero, CGSizeZero};  // per-pane sizes
-static int gNativeFillCurrentPane = -1;  // which pane is currently being fitted
+static int gNativeFillCurrentPane = 0;  // which pane is currently being fitted (default 0)
 static IMP gOrigUIScreenBounds;
 
 static CGRect DashSplitUIScreenBounds(id self, SEL _cmd)
 {
-    if (gNativeFillActive && gNativeFillCurrentPane >= 0 && gNativeFillCurrentPane < 3) {
+    if (gNativeFillActive) {
+        // Always return the current pane's size. gNativeFillCurrentPane is
+        // set during FitAppViewToContainer and stays at the last-fitted pane
+        // between fit calls, so async layout passes read the last pane's size.
+        // For panes of similar size (e.g. 191 vs 192 in 1:1 split) this is
+        // effectively correct. For very different sizes (e.g. 197 vs 394 in
+        // 1:2 split) the last-fitted pane wins between explicit fit calls —
+        // acceptable since the explicit re-fit at 0.6s/1.5s re-asserts each
+        // pane in sequence.
         CGSize sz = gNativeFillSizes[gNativeFillCurrentPane];
         if (!CGSizeEqualToSize(sz, CGSizeZero)) {
             CGRect hooked = CGRectMake(0, 0, sz.width, sz.height);
-            // Log the first 50 calls per activation to see who reads bounds
-            // and what they get — helps diagnose layout issues.
             static int sLogCount = 0;
-            if (sLogCount < 50) {
+            if (sLogCount < 30) {
                 sLogCount++;
-                CLog(@"native: [UIScreen bounds] hooked -> %@ (pane=%d caller self=%@)",
+                CLog(@"native: [UIScreen bounds] hooked -> %@ (pane=%d caller=%@)",
                      NSStringFromCGRect(hooked), gNativeFillCurrentPane,
                      NSStringFromClass([self class]));
             }
@@ -1095,28 +1101,33 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
     int fitMode = FitMode();
     
     if (fitMode == 2) {
-        // Native fill — "CarBridge-style" layout without UIScreen.bounds hook.
+        // Native fill — hook UIScreen.bounds + contentView bounds + layout.
         //
-        // The previous approach (hooking UIScreen.bounds per-pane) had a
-        // fundamental problem: UIScreen.bounds is a process-wide global, so
-        // multiple panes with different sizes would clobber each other's
-        // hook value. The async layout passes would read the wrong size.
+        // The App's internal layout engine reads UIScreen.bounds (NOT the
+        // superview bounds) to determine its root view size. Without the
+        // hook, the App lays out at 414x896 (phone) and gets cropped —
+        // confirmed by logs showing contentView.subviews at pane size but
+        // the App's inner UI still at phone size.
         //
-        // New approach: DON'T hook UIScreen.bounds at all. Instead, set the
-        // contentView's bounds to the pane size and force a layout pass.
-        // Most modern iOS Apps use Auto Layout, which is driven by the
-        // superview's bounds — not UIScreen.bounds. By setting the content
-        // container to the pane size and calling layoutIfNeeded, the App's
-        // view hierarchy reflows to fit the pane width. Wider panes get
-        // more spacing (like an iPad layout); narrower panes show a tighter
-        // version of the same UI. No transform deformation, no clipping.
-        //
-        // The appView is also set to the pane size so the App sees a
-        // pane-sized root view. clipsToBounds ensures no overflow.
+        // Solution: hook UIScreen.bounds to return the pane size so the
+        // App reflows to pane dimensions — like CarBridge does in fullscreen.
+        // For multi-pane, gNativeFillCurrentPane tracks which pane is being
+        // fitted so the hook returns the right size during layoutIfNeeded.
+        // Between explicit fit calls, the hook returns the last pane's size.
+        int paneIndex = -1;
+        for (int i = 0; i < 3; i++) {
+            if (gSlots[i] && gSlots[i].container == container) {
+                paneIndex = i;
+                break;
+            }
+        }
+        if (paneIndex < 0) paneIndex = 0;
+        gNativeFillCurrentPane = paneIndex;
+        gNativeFillSizes[paneIndex] = container.bounds.size;
+        gNativeFillActive = YES;
+
         CGFloat paneW = container.bounds.size.width;
         CGFloat paneH = container.bounds.size.height;
-
-        gNativeFillActive = NO;  // do NOT use UIScreen.bounds hook
 
         appView.frame = CGRectMake(0, 0, paneW, paneH);
         appView.bounds = CGRectMake(0, 0, paneW, paneH);
@@ -1127,40 +1138,18 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         contentView.clipsToBounds = YES;
         appView.clipsToBounds = YES;
 
-        CLog(@"fit: native fill(layout) pane=%@ appView=%@ contentView=%@ container=%@",
-             NSStringFromCGSize(container.bounds.size),
+        CLog(@"fit: native fill(hook) pane=%@ idx=%d appView=%@ contentView=%@ container=%@",
+             NSStringFromCGSize(container.bounds.size), paneIndex,
              NSStringFromCGRect(appView.frame),
              NSStringFromCGRect(contentView.frame),
              NSStringFromCGRect(container.frame));
-        CLog(@"fit: native fill appView.subviews=%d contentView.subviews=%d",
-             (int)appView.subviews.count,
-             (int)contentView.subviews.count);
-        // Diagnostic: log the frame of each direct subview of contentView.
-        // If the App reflowed to the pane size, its root view frame should
-        // match paneW x paneH. If it's still 414x896 (phone size), the App
-        // is NOT responding to the contentView bounds change — it's using
-        // UIScreen.bounds or a fixed frame.
-        for (UIView *sub in contentView.subviews) {
-            CLog(@"fit: native fill contentView.sub frame=%@ class=%@",
-                 NSStringFromCGRect(sub.frame),
-                 NSStringFromClass([sub class]));
-        }
-        // Also log the appView's subviews (one level up).
-        for (UIView *sub in appView.subviews) {
-            CLog(@"fit: native fill appView.sub frame=%@ class=%@",
-                 NSStringFromCGRect(sub.frame),
-                 NSStringFromClass([sub class]));
-        }
-        // Force a synchronous layout pass so the App reflows NOW.
+        // Force synchronous layout so the App reads the hooked bounds NOW.
         [contentView layoutIfNeeded];
         [appView layoutIfNeeded];
-        // Post-layout diagnostic: check if the App's subviews reflowed to
-        // the pane size or stayed at phone size.
-        CLog(@"fit: native fill POST-layout appView.frame=%@ appView.bounds=%@",
-             NSStringFromCGRect(appView.frame),
-             NSStringFromCGRect(appView.bounds));
+        // Post-layout diagnostic.
+        CLog(@"fit: native fill POST-layout appView.bounds=%@", NSStringFromCGRect(appView.bounds));
         for (UIView *sub in contentView.subviews) {
-            CLog(@"fit: native fill POST-layout contentView.sub frame=%@ bounds=%@ class=%@",
+            CLog(@"fit: native fill POST-layout sub frame=%@ bounds=%@ class=%@",
                  NSStringFromCGRect(sub.frame),
                  NSStringFromCGRect(sub.bounds),
                  NSStringFromClass([sub class]));
@@ -2268,7 +2257,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.28 loaded ---");
+        CLog(@"--- DashSplit 0.1.37 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
