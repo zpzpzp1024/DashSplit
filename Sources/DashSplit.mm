@@ -1221,15 +1221,26 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
              NSStringFromCGRect(contentView.frame),
              NSStringFromCGRect(container.frame));
         // Force synchronous layout so the App reads the hooked bounds NOW.
+        [sceneView setNeedsLayout];
+        [contentView setNeedsLayout];
+        [appView setNeedsLayout];
         [contentView layoutIfNeeded];
         [appView layoutIfNeeded];
-        // Post-layout diagnostic.
+        // Post-layout diagnostic — recurse 3 levels deep to find the App's
+        // actual content views and see what size THEY think they are.
         CLog(@"fit: native fill POST-layout appView.bounds=%@", NSStringFromCGRect(appView.bounds));
-        for (UIView *sub in contentView.subviews) {
-            CLog(@"fit: native fill POST-layout sub frame=%@ bounds=%@ class=%@",
-                 NSStringFromCGRect(sub.frame),
-                 NSStringFromCGRect(sub.bounds),
-                 NSStringFromClass([sub class]));
+        // Recurse 3 levels deep to find the App's actual content views.
+        for (UIView *s1 in contentView.subviews) {
+            CLog(@"fit: native fill POST-layout d=0 sub frame=%@ bounds=%@ class=%@",
+                 NSStringFromCGRect(s1.frame), NSStringFromCGRect(s1.bounds), NSStringFromClass([s1 class]));
+            for (UIView *s2 in s1.subviews) {
+                CLog(@"fit: native fill POST-layout d=1 sub frame=%@ bounds=%@ class=%@",
+                     NSStringFromCGRect(s2.frame), NSStringFromCGRect(s2.bounds), NSStringFromClass([s2 class]));
+                for (UIView *s3 in s2.subviews) {
+                    CLog(@"fit: native fill POST-layout d=2 sub frame=%@ bounds=%@ class=%@",
+                         NSStringFromCGRect(s3.frame), NSStringFromCGRect(s3.bounds), NSStringFromClass([s3 class]));
+                }
+            }
         }
     } else if (fitMode == 1) {
         gNativeFillActive = NO;
@@ -2334,7 +2345,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.40 loaded ---");
+        CLog(@"--- DashSplit 0.1.41 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
