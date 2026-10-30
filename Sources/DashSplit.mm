@@ -1113,12 +1113,46 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
     UIView *contentView = nil;
     @try { contentView = [sceneView valueForKey:@"_sceneContentContainerView"]; } @catch (...) {}
     
+    // Diagnostic: enumerate methods on sceneView and deviceController that
+    // might allow setting content size, so we can find the right API.
+    static BOOL didMethodDump = NO;
+    
     if (!contentView) {
-        CLog(@"fit: content view not reachable");
+        CLog(@"fit: content view not reachable (sceneView=%@ deviceController=%@)", sceneView ? NSStringFromClass([sceneView class]) : @"nil", deviceController ? NSStringFromClass([deviceController class]) : @"nil");
         return;
     }
     
     int fitMode = FitMode();
+    
+    if (!didMethodDump && fitMode == 2) {
+        didMethodDump = YES;
+        if (sceneView) {
+            CLog(@"diag: sceneView class=%@", NSStringFromClass([sceneView class]));
+            unsigned int count = 0;
+            Method *methods = class_copyMethodList([sceneView class], &count);
+            for (unsigned int i = 0; i < count; i++) {
+                SEL sel = method_getName(methods[i]);
+                const char *name = sel_getName(sel);
+                if (strstr(name, "ize") || strstr(name, "rame") || strstr(name, "ontent") || strstr(name, "eference") || strstr(name, "ayout") || strstr(name, "cene")) {
+                    CLog(@"diag: sceneView method: %s", name);
+                }
+            }
+            free(methods);
+        }
+        if (deviceController) {
+            CLog(@"diag: deviceController class=%@", NSStringFromClass([deviceController class]));
+            unsigned int count = 0;
+            Method *methods = class_copyMethodList([deviceController class], &count);
+            for (unsigned int i = 0; i < count; i++) {
+                SEL sel = method_getName(methods[i]);
+                const char *name = sel_getName(sel);
+                if (strstr(name, "ize") || strstr(name, "rame") || strstr(name, "ontent") || strstr(name, "eference") || strstr(name, "ayout") || strstr(name, "cene")) {
+                    CLog(@"diag: deviceController method: %s", name);
+                }
+            }
+            free(methods);
+        }
+    }
     
     if (fitMode == 2) {
         // Native fill — CarBridge-style scene content reference size +
@@ -2297,7 +2331,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.38 loaded ---");
+        CLog(@"--- DashSplit 0.1.39 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
