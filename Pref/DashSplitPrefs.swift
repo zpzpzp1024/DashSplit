@@ -212,8 +212,7 @@ private final class MultiAppRowTarget: NSObject {
     }
 }
 
-@objc(DashSplitMultiAppPicker)
-final class MultiAppPickerController: PSListController {
+class MultiAppPickerController: PSListController {
     private var rowTargets: [MultiAppRowTarget] = []
 
     override func viewDidLoad() {
@@ -267,6 +266,9 @@ final class MultiAppPickerController: PSListController {
         set { super.specifiers = newValue }
     }
 }
+
+@objc(DashSplitMultiAppPicker)
+final class DashSplitMultiAppPicker: MultiAppPickerController {}
 
 // MARK: - Fit mode picker (等比缩放 / 拉伸填满)
 
