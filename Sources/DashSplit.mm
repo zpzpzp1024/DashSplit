@@ -1860,8 +1860,15 @@ static void Layout(void)
     //
     // Test mode simulates a landscape car display by computing a sideMargin
     // proportional to the screen, giving the same visual layout as the car.
+    //
+    // Pane fill width: 3-split fills the entire usable width (apps side by
+    // side already fill the screen). 2-split uses 2/3 so the right 1/3 stays
+    // uncovered. 1-split uses 1/3 so a single app pane sits on the left
+    // without masking the underlying CarPlay UI to its right.
     CGFloat sideMargin = floor(bounds.size.width / 13.0);
-    CGFloat usable = bounds.size.width - sideMargin;
+    CGFloat fullWidth = bounds.size.width - sideMargin;
+    CGFloat fillFraction = (count >= 3) ? 1.0 : (count == 2 ? 2.0/3.0 : 1.0/3.0);
+    CGFloat usable = floor(fullWidth * fillFraction);
 
     // Get user-configured split ratios (falls back to defaults when unset).
     int ratios[3] = {0};
