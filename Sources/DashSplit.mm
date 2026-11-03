@@ -122,6 +122,9 @@ static NSString *const kPrefsSplitMode = @"SplitMode";
 static NSString *const kPrefsSplitRatio = @"SplitRatio";
 static NSString *const kPrefsSplitRatio2 = @"SplitRatio2"; // 3-split: pane2 share
 static NSString *const kPrefsSplitRatio3 = @"SplitRatio3"; // 3-split: pane3 share
+// Pane scale: integer 10-100, divided by 100 to get the actual scale factor
+// (0.1 - 1.0). Scales the entire pane container (width AND height) equally.
+static NSString *const kPrefsPaneScale = @"PaneScale";
 
 // Uninstallable system apps: the defaults must exist on every device.
 static NSString *const kDefaultHost1 = @"com.apple.mobiletimer";   // 时钟
@@ -346,6 +349,18 @@ static int PaneCount(void)
     return SplitMode();
 }
 
+// Pane scale: integer 10-100 stored in prefs, divided by 100 to get the
+// actual scale factor (0.1 - 1.0). Default is 100 (1.0 = no scaling).
+// Scales the entire pane container (width AND height) equally, keeping
+// the top-left corner anchored at the Layout-assigned position.
+static CGFloat PaneScale(void)
+{
+    int raw = (int)PrefInteger(kPrefsPaneScale, 100);
+    if (raw < 10) raw = 10;
+    if (raw > 100) raw = 100;
+    return (CGFloat)raw / 100.0f;
+}
+
 static NSString *HostBundleID1(void)
 {
     NSString *bundleID = PrefString(kPrefsHostApp);
@@ -395,6 +410,10 @@ static void LogPrefsState(void)
          HostBundleID1(),
          HostBundleID2(),
          HostBundleID3());
+
+    CLog(@"prefs: fitMode=%d paneScale=%.2f",
+         FitMode(),
+         PaneScale());
 }
 
 #pragma mark - Runtime helpers
@@ -1974,23 +1993,30 @@ static void Layout(void)
         }
     }
 
+    // Pane scale: shrink the entire pane container (width + height) by
+    // this factor. The top-left corner stays at the Layout-assigned
+    // position; the pane gets smaller towards the bottom-right.
+    CGFloat scale = PaneScale();
+
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
+            CGFloat scaledW = floor(widths[index] * scale);
+            CGFloat scaledH = floor(bounds.size.height * scale);
             CGRect baseFrame = CGRectMake(sideMargin + origins[index], 0,
-                                          widths[index], bounds.size.height);
+                                          scaledW, scaledH);
             gPaneBaseFrames[index] = baseFrame;
             // Apply drag offset on top of the base frame.
             gPanes[index].frame = CGRectMake(baseFrame.origin.x + gPaneOffsets[index].x,
                                               baseFrame.origin.y + gPaneOffsets[index].y,
                                               baseFrame.size.width,
                                               baseFrame.size.height);
-            CLog(@"layout: pane[%d] frame=%@ ratio=%d offset={%.0f,%.0f}", index,
+            CLog(@"layout: pane[%d] frame=%@ ratio=%d scale=%.2f offset={%.0f,%.0f}", index,
                  NSStringFromCGRect(gPanes[index].frame), ratios[index],
-                 gPaneOffsets[index].x, gPaneOffsets[index].y);
+                 scale, gPaneOffsets[index].x, gPaneOffsets[index].y);
 
             // Position the drag handle at the top of the pane.
             if (gDragHandles[index]) {
-                gDragHandles[index].frame = CGRectMake(0, 0, widths[index], 28);
+                gDragHandles[index].frame = CGRectMake(0, 0, scaledW, 28);
             }
         }
     }
@@ -2473,7 +2499,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.41 loaded ---");
+        CLog(@"--- DashSplit 0.1.45 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

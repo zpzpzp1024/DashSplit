@@ -22,9 +22,10 @@ private let keySplitMode = "SplitMode"
 private let keySplitRatio = "SplitRatio"
 private let keySplitRatio2 = "SplitRatio2"
 private let keySplitRatio3 = "SplitRatio3"
+private let keyPaneScale = "PaneScale"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.41"
+private let tweakVersion = "0.1.45"
 
 // Uninstallable system apps: the defaults must exist on every device.
 private let defaultLeft = "com.apple.mobiletimer"   // 时钟
@@ -667,12 +668,16 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "显示与测试",
-                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。测试模式不连 CarPlay 直接预览。更改后重启 SpringBoard 生效。"
+                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。缩放比例:等比缩小整个蓝色遮罩容器(宽和高同时缩放),1.0=原始大小,0.5=缩小一半。测试模式不连 CarPlay 直接预览。更改后重启 SpringBoard 生效。"
                 )
             ], to: &specifiers, in: self)
             if let fitRow = linkRow("显示模式:\(fitModeName())", detail: DashSplitFitModePicker.self) {
                 specifiers.add(fitRow)
             }
+            // 缩放比例: 整数 10-100, 除以 100 得到实际缩放因子 0.1-1.0
+            SpecifierFactory.add([
+                SliderCell(name: "缩放比例", key: keyPaneScale, defaultValue: 100, range: 10..<101)
+            ], to: &specifiers, in: self)
             // 横屏/竖屏预览测试选项
             let testOrient = currentTestLandscape() ? "横屏预览" : "竖屏预览"
             if let orientRow = linkRow("预览方向:\(testOrient)", detail: DashSplitTestOrientPicker.self) {
