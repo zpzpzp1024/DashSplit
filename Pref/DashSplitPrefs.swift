@@ -203,7 +203,7 @@ private final class MultiAppRowTarget: NSObject {
         toggleAppSelected(bundleID)
         NSLog("[DashSplitPref] toggle app: %@ ", bundleID)
         // Reload the picker to show updated selection state.
-        picker?.reload()
+        picker?.reloadPicker()
         // Also refresh the parent pane so dynamic sliders update.
         if let nav = picker?.navigationController, nav.viewControllers.count >= 2,
            let parent = nav.viewControllers[nav.viewControllers.count - 2] as? DashSplitPrefListController {
@@ -221,7 +221,7 @@ final class MultiAppPickerController: PSListController {
         title = "选择应用"
     }
 
-    @objc func reload() {
+    @objc func reloadPicker() {
         setValue(nil, forKey: "_specifiers")
         perform(NSSelectorFromString("reloadSpecifiers"))
     }
