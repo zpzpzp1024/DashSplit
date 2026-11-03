@@ -1298,8 +1298,18 @@ static void BringHandleToFront(UIView *container)
     if (!container) return;
     for (int i = 0; i < 3; i++) {
         if (gDragHandles[i] && gDragHandles[i].superview == container) {
+            // Bring overlay views to the front in z-order: resize edges,
+            // then drag handle, then close button (always on top).
+            if (gResizeRightEdges[i] && gResizeRightEdges[i].superview == container)
+                [container bringSubviewToFront:gResizeRightEdges[i]];
+            if (gResizeBottomEdges[i] && gResizeBottomEdges[i].superview == container)
+                [container bringSubviewToFront:gResizeBottomEdges[i]];
             [container bringSubviewToFront:gDragHandles[i]];
             gDragHandles[i].layer.zPosition = 9997;
+            if (gCloseButtons[i] && gCloseButtons[i].superview == container) {
+                [container bringSubviewToFront:gCloseButtons[i]];
+                gCloseButtons[i].layer.zPosition = 9998;
+            }
             return;
         }
     }
@@ -1589,11 +1599,28 @@ static CGPoint gPaneOffsets[3] = {{0, 0}, {0, 0}, {0, 0}};
 // handler reads these to compute the dragged position.
 static CGRect gPaneBaseFrames[3] = {CGRectZero, CGRectZero, CGRectZero};
 
-#pragma mark - Pane drag gesture
+// Per-pane custom sizes from edge-resize gestures. CGSizeZero means
+// "use the Layout-computed default size". Non-zero overrides the width
+// and/or height so the pane keeps its user-resized dimensions.
+static CGSize gPaneCustomSizes[3] = {CGSizeZero, CGSizeZero, CGSizeZero};
+// Per-pane closed state: when the user taps the × button the pane is
+// hidden and its host slot torn down. Layout skips closed panes.
+static BOOL gPaneClosed[3] = {NO, NO, NO};
+// Close button and resize-edge views for each pane.
+static UIButton *gCloseButtons[3];
+static UIView *gResizeRightEdges[3];
+static UIView *gResizeBottomEdges[3];
+
+#pragma mark - Pane drag / close / resize gestures
 
 @interface DashSplitDragHandler : NSObject
 - (void)handleDrag:(UIPanGestureRecognizer *)gesture;
+- (void)handleResize:(UIPanGestureRecognizer *)gesture;
+- (void)closeButtonTapped:(UIButton *)sender;
 @end
+
+// Forward declaration — TeardownSlot is defined later in the file.
+static void TeardownSlot(HostSlot *slot);
 
 @implementation DashSplitDragHandler
 
@@ -1650,9 +1677,86 @@ static CGRect gPaneBaseFrames[3] = {CGRectZero, CGRectZero, CGRectZero};
 
         [gesture setTranslation:CGPointZero inView:parent];
     }
-    // UIGestureRecognizerStateEnded / Cancelled: nothing to do — the
-    // pane stays where the user left it. A new Layout pass (e.g. split
-    // mode change) resets offsets to zero.
+}
+
+- (void)handleResize:(UIPanGestureRecognizer *)gesture
+{
+    UIView *edge = gesture.view;
+    if (!edge) return;
+
+    // Find which pane index this edge belongs to.
+    int paneIndex = -1;
+    BOOL isRightEdge = NO;
+    for (int i = 0; i < 3; i++) {
+        if (gResizeRightEdges[i] == edge) { paneIndex = i; isRightEdge = YES; break; }
+        if (gResizeBottomEdges[i] == edge) { paneIndex = i; isRightEdge = NO; break; }
+    }
+    if (paneIndex < 0) return;
+
+    UIView *pane = gPanes[paneIndex];
+    if (!pane) return;
+
+    UIView *parent = pane.superview;
+    if (!parent) return;
+
+    CGPoint translation = [gesture translationInView:parent];
+
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        // Store the current size as the starting point for this resize.
+        gPaneCustomSizes[paneIndex] = pane.bounds.size;
+    }
+
+    if (gesture.state == UIGestureRecognizerStateChanged) {
+        CGSize newSize = gPaneCustomSizes[paneIndex];
+        if (isRightEdge) {
+            newSize.width += translation.x;
+        } else {
+            newSize.height += translation.y;
+        }
+        // Clamp to minimum visible size.
+        CGFloat minSize = 80;
+        if (newSize.width < minSize) newSize.width = minSize;
+        if (newSize.height < minSize) newSize.height = minSize;
+        // Clamp to parent bounds.
+        CGFloat maxW = parent.bounds.size.width - pane.frame.origin.x;
+        CGFloat maxH = parent.bounds.size.height - pane.frame.origin.y;
+        if (newSize.width > maxW) newSize.width = maxW;
+        if (newSize.height > maxH) newSize.height = maxH;
+
+        gPaneCustomSizes[paneIndex] = newSize;
+
+        // Apply the new size immediately.
+        CGRect f = pane.frame;
+        pane.frame = CGRectMake(f.origin.x, f.origin.y, newSize.width, newSize.height);
+        gPaneBaseFrames[paneIndex] = pane.frame;
+
+        // Update drag handle width.
+        if (gDragHandles[paneIndex]) {
+            gDragHandles[paneIndex].frame = CGRectMake(0, 0, newSize.width, 28);
+        }
+
+        [gesture setTranslation:CGPointZero inView:parent];
+    }
+}
+
+- (void)closeButtonTapped:(UIButton *)sender
+{
+    // Find which pane index this close button belongs to.
+    int paneIndex = -1;
+    for (int i = 0; i < 3; i++) {
+        if (gCloseButtons[i] == sender) { paneIndex = i; break; }
+    }
+    if (paneIndex < 0) return;
+
+    CLog(@"close: pane[%d] closed by user", paneIndex);
+
+    // Hide the pane and its overlay views.
+    UIView *pane = gPanes[paneIndex];
+    if (pane) pane.hidden = YES;
+    gPaneClosed[paneIndex] = YES;
+
+    // Tear down the hosted app in this slot.
+    TeardownSlot(gSlots[paneIndex]);
 }
 
 @end
@@ -2028,8 +2132,21 @@ static void Layout(void)
 
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
-            CGFloat scaledW = floor(widths[index] * scale);
-            CGFloat scaledH = floor(bounds.size.height * scale);
+            // Skip closed panes — they're hidden and don't need layout.
+            if (gPaneClosed[index]) {
+                gPanes[index].hidden = YES;
+                continue;
+            }
+
+            CGFloat scaledW, scaledH;
+            // If the user has a custom size (from edge-resize), use it.
+            if (gPaneCustomSizes[index].width > 0 || gPaneCustomSizes[index].height > 0) {
+                scaledW = gPaneCustomSizes[index].width;
+                scaledH = gPaneCustomSizes[index].height;
+            } else {
+                scaledW = floor(widths[index] * scale);
+                scaledH = floor(bounds.size.height * scale);
+            }
             // Compute the unscaled center, then place the scaled frame
             // so that its center matches the unscaled center.
             CGFloat unscaledCenterX = sideMargin + origins[index] + widths[index] / 2.0;
@@ -2051,6 +2168,18 @@ static void Layout(void)
             // Position the drag handle at the top of the pane.
             if (gDragHandles[index]) {
                 gDragHandles[index].frame = CGRectMake(0, 0, scaledW, 28);
+            }
+            // Position the close button at the top-right corner.
+            if (gCloseButtons[index]) {
+                gCloseButtons[index].frame = CGRectMake(scaledW - 28, 0, 28, 28);
+            }
+            // Position the right resize edge.
+            if (gResizeRightEdges[index]) {
+                gResizeRightEdges[index].frame = CGRectMake(scaledW - 8, 0, 8, scaledH);
+            }
+            // Position the bottom resize edge.
+            if (gResizeBottomEdges[index]) {
+                gResizeBottomEdges[index].frame = CGRectMake(0, scaledH - 8, scaledW, 8);
             }
         }
     }
@@ -2239,6 +2368,50 @@ UIColor *paneColor = [UIColor clearColor];
         [handle addGestureRecognizer:pan];
         [gPanes[index] addSubview:handle];
         gDragHandles[index] = handle;
+
+        // Reset closed state — new interface starts with all panes visible.
+        gPaneClosed[index] = NO;
+        gPaneCustomSizes[index] = CGSizeZero;
+
+        // Close button (×) at the top-right corner of the pane.
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        [closeBtn setTitle:@"×" forState:UIControlStateNormal];
+        [closeBtn setTitle:@"×" forState:UIControlStateHighlighted];
+        closeBtn.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+        [closeBtn setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.7] forState:UIControlStateNormal];
+        [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
+        closeBtn.frame = CGRectMake(0, 0, 28, 28);
+        closeBtn.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
+        closeBtn.layer.cornerRadius = 14;
+        closeBtn.layer.zPosition = 9998;  // above the drag handle
+        closeBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
+        [closeBtn addTarget:gDragHandler action:@selector(closeButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [gPanes[index] addSubview:closeBtn];
+        gCloseButtons[index] = closeBtn;
+
+        // Right resize edge: an 8px wide strip on the right side of the pane.
+        UIView *rightEdge = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 8, 0)];
+        rightEdge.backgroundColor = [UIColor clearColor];
+        rightEdge.userInteractionEnabled = YES;
+        rightEdge.autoresizingMask = UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleLeftMargin;
+        rightEdge.layer.zPosition = 9996;
+        UIPanGestureRecognizer *resizeR = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
+                                                                                    action:@selector(handleResize:)];
+        [rightEdge addGestureRecognizer:resizeR];
+        [gPanes[index] addSubview:rightEdge];
+        gResizeRightEdges[index] = rightEdge;
+
+        // Bottom resize edge: an 8px tall strip at the bottom of the pane.
+        UIView *bottomEdge = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, 8)];
+        bottomEdge.backgroundColor = [UIColor clearColor];
+        bottomEdge.userInteractionEnabled = YES;
+        bottomEdge.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
+        bottomEdge.layer.zPosition = 9996;
+        UIPanGestureRecognizer *resizeB = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
+                                                                                    action:@selector(handleResize:)];
+        [bottomEdge addGestureRecognizer:resizeB];
+        [gPanes[index] addSubview:bottomEdge];
+        gResizeBottomEdges[index] = bottomEdge;
     }
     
 // Create divider lines — removed: panes are now draggable so
@@ -2533,7 +2706,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.46 loaded ---");
+        CLog(@"--- DashSplit 0.1.47 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
