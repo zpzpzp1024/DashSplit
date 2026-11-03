@@ -1284,6 +1284,27 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
     }
 }
 
+// Forward declaration: gDragHandles is defined later in the file, but
+// BringHandleToFront (below) needs to reference it.
+static UIView *gDragHandles[3];
+
+// Re-bring the drag handle to the front of the pane's subview stack.
+// The hosted appView is added via addSubview after the handle, which
+// puts it on top. We need the handle to remain on top for touches to
+// reach its pan gesture recognizer instead of being intercepted by
+// the appView's internal view hierarchy.
+static void BringHandleToFront(UIView *container)
+{
+    if (!container) return;
+    for (int i = 0; i < 3; i++) {
+        if (gDragHandles[i] && gDragHandles[i].superview == container) {
+            [container bringSubviewToFront:gDragHandles[i]];
+            gDragHandles[i].layer.zPosition = 9997;
+            return;
+        }
+    }
+}
+
 static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
 {
     if (!appView || !container) return;
@@ -1299,6 +1320,9 @@ static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
     appView.autoresizingMask = UIViewAutoresizingNone;
     [container addSubview:appView];
     appView.frame = CGRectMake(0, 0, initialSize.width, initialSize.height);
+    // Re-bring the drag handle to the front so the hosted appView does
+    // not cover it (addSubview puts appView on top of the subview stack).
+    BringHandleToFront(container);
     CLog(@"scale: fitMode=%d initialSize=%@ container=%@ appView=%@",
          fitMode,
          NSStringFromCGSize(initialSize),
@@ -1310,10 +1334,12 @@ static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
     // once it settles so the first paint is fitted too.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         FitAppViewToContainer(appView, container);
+        BringHandleToFront(container);
     });
     // Second re-assert at 1.5s for slower scene setups.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         FitAppViewToContainer(appView, container);
+        BringHandleToFront(container);
     });
 }
 
@@ -1329,10 +1355,12 @@ static void ReactivateSlot(int index)
     SlotSetMode(index, 2);
     ApplyDisplayMode4(slot.viewController);
     FitAppViewToContainer(Call0(slot.viewController, @"view"), slot.container);
+    BringHandleToFront(slot.container);
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if (gSlots[index] != slot) return;   // slot was re-hosted meanwhile
         FitAppViewToContainer(Call0(slot.viewController, @"view"), slot.container);
+        BringHandleToFront(slot.container);
     });
 }
 
@@ -1543,7 +1571,7 @@ static void TeardownAllHosts(void)
 
 static UIWindow *gWindow;
 static UIView *gPanes[3];
-static UIView *gDragHandles[3];  // drag handle bars on top of each pane
+// gDragHandles[3] is forward-declared earlier (before BringHandleToFront).
 static UIView *gDividers[2];  // up to 2 dividers for 3-pane split
 static UIView *gTestContainer;  // rotated container for landscape test preview
 static BOOL gTestMode;
