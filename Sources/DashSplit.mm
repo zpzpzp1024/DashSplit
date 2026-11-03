@@ -1524,6 +1524,7 @@ static void TeardownAllHosts(void)
 
 static UIWindow *gWindow;
 static UIView *gPanes[3];
+static UIView *gDragHandles[3];  // drag handle bars on top of each pane
 static UIView *gDividers[2];  // up to 2 dividers for 3-pane split
 static UIView *gTestContainer;  // rotated container for landscape test preview
 static BOOL gTestMode;
@@ -1531,6 +1532,85 @@ static BOOL gTestLandscape;  // tracks the TestLandscape pref of the active test
 static UILabel *gLockHintLabel;  // "请锁屏手机后显示" banner shown when panes hidden
 static UIButton *gToggleButton;
 static int gCurrentPaneCount = 0;  // pane count of the currently active interface
+
+// Per-pane drag offsets (delta from the Layout-assigned position).
+// The drag gesture handler moves panes independently; Layout adds these
+// offsets to the base frame so a re-layout (e.g. split-mode change) does
+// not fight the user's drag — it resets offsets to zero instead.
+static CGPoint gPaneOffsets[3] = {{0, 0}, {0, 0}, {0, 0}};
+// The Layout-assigned frames (before drag offset is applied). The drag
+// handler reads these to compute the dragged position.
+static CGRect gPaneBaseFrames[3] = {CGRectZero, CGRectZero, CGRectZero};
+
+#pragma mark - Pane drag gesture
+
+@interface DashSplitDragHandler : NSObject
+- (void)handleDrag:(UIPanGestureRecognizer *)gesture;
+@end
+
+@implementation DashSplitDragHandler
+
+- (void)handleDrag:(UIPanGestureRecognizer *)gesture
+{
+    UIView *handle = gesture.view;
+    if (!handle) return;
+
+    // Find which pane index this handle belongs to.
+    int paneIndex = -1;
+    for (int i = 0; i < 3; i++) {
+        if (gDragHandles[i] == handle) { paneIndex = i; break; }
+    }
+    if (paneIndex < 0) return;
+
+    UIView *pane = gPanes[paneIndex];
+    if (!pane) return;
+
+    // Compute drag translation in the pane's parent coordinate space.
+    UIView *parent = pane.superview;
+    if (!parent) return;
+
+    CGPoint translation = [gesture translationInView:parent];
+
+    if (gesture.state == UIGestureRecognizerStateChanged) {
+        // Accumulate into the offset.
+        gPaneOffsets[paneIndex].x += translation.x;
+        gPaneOffsets[paneIndex].y += translation.y;
+
+        // Get parent bounds for boundary clamping.
+        CGRect parentBounds = parent.bounds;
+        CGFloat paneW = gPaneBaseFrames[paneIndex].size.width;
+        CGFloat paneH = gPaneBaseFrames[paneIndex].size.height;
+
+        // Clamp so the pane cannot be dragged entirely off-screen —
+        // at least 40px of the pane must remain visible on each axis.
+        CGFloat minVisible = 40;
+        CGFloat maxX = parentBounds.size.width - minVisible;
+        CGFloat maxY = parentBounds.size.height - minVisible;
+        CGFloat minX = minVisible - paneW;
+        CGFloat minY = -(paneH - minVisible);
+
+        if (gPaneOffsets[paneIndex].x < minX) gPaneOffsets[paneIndex].x = minX;
+        if (gPaneOffsets[paneIndex].x > maxX) gPaneOffsets[paneIndex].x = maxX;
+        if (gPaneOffsets[paneIndex].y < minY) gPaneOffsets[paneIndex].y = minY;
+        if (gPaneOffsets[paneIndex].y > maxY) gPaneOffsets[paneIndex].y = maxY;
+
+        // Apply: move the pane by adding the offset to the base frame.
+        CGRect base = gPaneBaseFrames[paneIndex];
+        pane.frame = CGRectMake(base.origin.x + gPaneOffsets[paneIndex].x,
+                                  base.origin.y + gPaneOffsets[paneIndex].y,
+                                  base.size.width,
+                                  base.size.height);
+
+        [gesture setTranslation:CGPointZero inView:parent];
+    }
+    // UIGestureRecognizerStateEnded / Cancelled: nothing to do — the
+    // pane stays where the user left it. A new Layout pass (e.g. split
+    // mode change) resets offsets to zero.
+}
+
+@end
+
+static DashSplitDragHandler *gDragHandler;
 
 // The toggle glyph must be set on BOTH normal and highlighted states —
 // otherwise the press shows the stale title from the other state.
@@ -1686,11 +1766,11 @@ static void RestoreNow(void)
         gWindow.hidden = YES;
         gWindow = nil;
         int count = PaneCount();
-        for (int i = 0; i < count; i++) gPanes[i] = nil;
-        for (int i = 0; i < 2; i++) gDividers[i] = nil;
-        gTestContainer = nil;
-        gToggleButton = nil;
-        gLockHintLabel = nil;
+for (int i = 0; i < count; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
+for (int i = 0; i < 2; i++) gDividers[i] = nil;
+gTestContainer = nil;
+gToggleButton = nil;
+gLockHintLabel = nil;
         gCurrentPaneCount = 0;
         gTestMode = NO;
         gTestLandscape = NO;
@@ -1896,10 +1976,22 @@ static void Layout(void)
 
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
-            gPanes[index].frame = CGRectMake(sideMargin + origins[index], 0,
-                                              widths[index], bounds.size.height);
-            CLog(@"layout: pane[%d] frame=%@ ratio=%d", index,
-                 NSStringFromCGRect(gPanes[index].frame), ratios[index]);
+            CGRect baseFrame = CGRectMake(sideMargin + origins[index], 0,
+                                          widths[index], bounds.size.height);
+            gPaneBaseFrames[index] = baseFrame;
+            // Apply drag offset on top of the base frame.
+            gPanes[index].frame = CGRectMake(baseFrame.origin.x + gPaneOffsets[index].x,
+                                              baseFrame.origin.y + gPaneOffsets[index].y,
+                                              baseFrame.size.width,
+                                              baseFrame.size.height);
+            CLog(@"layout: pane[%d] frame=%@ ratio=%d offset={%.0f,%.0f}", index,
+                 NSStringFromCGRect(gPanes[index].frame), ratios[index],
+                 gPaneOffsets[index].x, gPaneOffsets[index].y);
+
+            // Position the drag handle at the top of the pane.
+            if (gDragHandles[index]) {
+                gDragHandles[index].frame = CGRectMake(0, 0, widths[index], 28);
+            }
         }
     }
     for (int i = 0; i < count - 1 && i < 2; i++) {
@@ -2045,12 +2137,44 @@ static void CreateInterface(BOOL testMode)
     }
     
     // Create panes with blue translucent background.
+    // Reset drag offsets — a new interface starts with panes at their
+    // Layout-assigned positions.
+    for (int i = 0; i < 3; i++) {
+        gPaneOffsets[i] = CGPointZero;
+        gPaneBaseFrames[i] = CGRectZero;
+    }
+    if (!gDragHandler) gDragHandler = [DashSplitDragHandler new];
     UIColor *paneColor = [UIColor colorWithRed:0.05 green:0.20 blue:0.55 alpha:0.55];
     NSArray *paneTitles = @[@"加载App……", @"加载App……", @"加载App……"];
     for (int index = 0; index < count; index++) {
         NSString *title = index < paneTitles.count ? paneTitles[index] : @"加载App……";
         gPanes[index] = MakePane(title, paneColor);
         [addTarget addSubview:gPanes[index]];
+
+        // Drag handle: a semi-transparent bar pinned to the top of the pane.
+        // Touches on the handle move the pane; touches everywhere else on
+        // the pane pass through to the hosted app.
+        UIView *handle = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, 28)];
+        handle.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.35];
+        handle.layer.cornerRadius = 4;
+        handle.userInteractionEnabled = YES;
+        handle.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        handle.layer.zPosition = 9997;  // above the hosted appView
+        // Visual indicator: three short lines centered in the handle.
+        for (int dot = 0; dot < 3; dot++) {
+            UIView *line = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 20, 3)];
+            line.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.5];
+            line.layer.cornerRadius = 1.5;
+            line.center = CGPointMake(handle.bounds.size.width / 2.0,
+                                       handle.bounds.size.height / 2.0 + (dot - 1) * 6);
+            line.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
+            [handle addSubview:line];
+        }
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
+                                                                                action:@selector(handleDrag:)];
+        [handle addGestureRecognizer:pan];
+        [gPanes[index] addSubview:handle];
+        gDragHandles[index] = handle;
     }
     
     // Create divider lines (one per gap between adjacent panes).
@@ -2242,11 +2366,11 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-                for (int i = 0; i < 3; i++) gPanes[i] = nil;
-                for (int i = 0; i < 2; i++) gDividers[i] = nil;
-                gTestContainer = nil;
-                gToggleButton = nil;
-                gLockHintLabel = nil;
+for (int i = 0; i < 3; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
+for (int i = 0; i < 2; i++) gDividers[i] = nil;
+gTestContainer = nil;
+gToggleButton = nil;
+gLockHintLabel = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
                 gTestLandscape = NO;
@@ -2262,11 +2386,11 @@ static void Tick(void)
                 gWindow.hidden = YES;
                 gWindow = nil;
                 int count = PaneCount();
-                for (int i = 0; i < count; i++) gPanes[i] = nil;
-                for (int i = 0; i < 2; i++) gDividers[i] = nil;
-                gTestContainer = nil;
-                gToggleButton = nil;
-                gLockHintLabel = nil;
+for (int i = 0; i < count; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
+for (int i = 0; i < 2; i++) gDividers[i] = nil;
+gTestContainer = nil;
+gToggleButton = nil;
+gLockHintLabel = nil;
                 gCurrentPaneCount = 0;
                 gTestMode = NO;
                 gTestLandscape = NO;
@@ -2279,11 +2403,11 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-                for (int i = 0; i < 3; i++) gPanes[i] = nil;
-                for (int i = 0; i < 2; i++) gDividers[i] = nil;
-                gTestContainer = nil;
-                gToggleButton = nil;
-                gLockHintLabel = nil;
+for (int i = 0; i < 3; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
+for (int i = 0; i < 2; i++) gDividers[i] = nil;
+gTestContainer = nil;
+gToggleButton = nil;
+gLockHintLabel = nil;
                 gCurrentPaneCount = 0;
                 // Fall through to CreateInterface below.
             } else if (gTestMode && gTestLandscape != PrefBool(kPrefsTestLandscape, YES)) {
@@ -2295,11 +2419,11 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-                for (int i = 0; i < 3; i++) gPanes[i] = nil;
-                for (int i = 0; i < 2; i++) gDividers[i] = nil;
-                gTestContainer = nil;
-                gToggleButton = nil;
-                gLockHintLabel = nil;
+for (int i = 0; i < 3; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
+for (int i = 0; i < 2; i++) gDividers[i] = nil;
+gTestContainer = nil;
+gToggleButton = nil;
+gLockHintLabel = nil;
                 gCurrentPaneCount = 0;
                 // Fall through to CreateInterface below.
             } else {
