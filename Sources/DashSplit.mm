@@ -1287,6 +1287,9 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
 // Forward declaration: gDragHandles is defined later in the file, but
 // BringHandleToFront (below) needs to reference it.
 static UIView *gDragHandles[3];
+static UIButton *gCloseButtons[3];
+static UIView *gResizeRightEdges[3];
+static UIView *gResizeBottomEdges[3];
 
 // Re-bring the drag handle to the front of the pane's subview stack.
 // The hosted appView is added via addSubview after the handle, which
@@ -1606,10 +1609,8 @@ static CGSize gPaneCustomSizes[3] = {CGSizeZero, CGSizeZero, CGSizeZero};
 // Per-pane closed state: when the user taps the × button the pane is
 // hidden and its host slot torn down. Layout skips closed panes.
 static BOOL gPaneClosed[3] = {NO, NO, NO};
-// Close button and resize-edge views for each pane.
-static UIButton *gCloseButtons[3];
-static UIView *gResizeRightEdges[3];
-static UIView *gResizeBottomEdges[3];
+// gCloseButtons, gResizeRightEdges, gResizeBottomEdges: forward-declared
+// earlier (before BringHandleToFront).
 
 #pragma mark - Pane drag / close / resize gestures
 
