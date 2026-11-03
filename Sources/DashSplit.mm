@@ -352,7 +352,7 @@ static int PaneCount(void)
 // Pane scale: integer 10-100 stored in prefs, divided by 100 to get the
 // actual scale factor (0.1 - 1.0). Default is 100 (1.0 = no scaling).
 // Scales the entire pane container (width AND height) equally, keeping
-// the top-left corner anchored at the Layout-assigned position.
+// the CENTER fixed — the pane shrinks towards its center from all sides.
 static CGFloat PaneScale(void)
 {
     int raw = (int)PrefInteger(kPrefsPaneScale, 100);
@@ -1994,15 +1994,21 @@ static void Layout(void)
     }
 
     // Pane scale: shrink the entire pane container (width + height) by
-    // this factor. The top-left corner stays at the Layout-assigned
-    // position; the pane gets smaller towards the bottom-right.
+    // this factor, keeping the CENTER fixed — the pane shrinks equally
+    // towards its center from all four sides.
     CGFloat scale = PaneScale();
 
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
             CGFloat scaledW = floor(widths[index] * scale);
             CGFloat scaledH = floor(bounds.size.height * scale);
-            CGRect baseFrame = CGRectMake(sideMargin + origins[index], 0,
+            // Compute the unscaled center, then place the scaled frame
+            // so that its center matches the unscaled center.
+            CGFloat unscaledCenterX = sideMargin + origins[index] + widths[index] / 2.0;
+            CGFloat unscaledCenterY = bounds.size.height / 2.0;
+            CGFloat scaledX = unscaledCenterX - scaledW / 2.0;
+            CGFloat scaledY = unscaledCenterY - scaledH / 2.0;
+            CGRect baseFrame = CGRectMake(scaledX, scaledY,
                                           scaledW, scaledH);
             gPaneBaseFrames[index] = baseFrame;
             // Apply drag offset on top of the base frame.

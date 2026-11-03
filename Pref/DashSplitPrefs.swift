@@ -668,7 +668,7 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "显示与测试",
-                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。缩放比例:等比缩小整个蓝色遮罩容器(宽和高同时缩放),1.0=原始大小,0.5=缩小一半。测试模式不连 CarPlay 直接预览。更改后重启 SpringBoard 生效。"
+                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。缩放比例:以中心点为锚,四周等比缩小整个蓝色遮罩容器(宽和高同时缩放),1.0=原始大小,0.5=缩小一半。测试模式不连 CarPlay 直接预览。更改后重启 SpringBoard 生效。"
                 )
             ], to: &specifiers, in: self)
             if let fitRow = linkRow("显示模式:\(fitModeName())", detail: DashSplitFitModePicker.self) {
