@@ -1288,8 +1288,8 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
 // BringHandleToFront (below) needs to reference it.
 static UIView *gDragHandles[3];
 static UIButton *gCloseButtons[3];
-static UIView *gResizeRightEdges[3];
-static UIView *gResizeBottomEdges[3];
+// Capsule buttons shown when a pane is closed via ×. Tapping restores the pane.
+static UIButton *gCapsules[3];
 
 // Re-bring the drag handle to the front of the pane's subview stack.
 // The hosted appView is added via addSubview after the handle, which
@@ -1301,12 +1301,6 @@ static void BringHandleToFront(UIView *container)
     if (!container) return;
     for (int i = 0; i < 3; i++) {
         if (gDragHandles[i] && gDragHandles[i].superview == container) {
-            // Bring overlay views to the front in z-order: resize edges,
-            // then drag handle, then close button (always on top).
-            if (gResizeRightEdges[i] && gResizeRightEdges[i].superview == container)
-                [container bringSubviewToFront:gResizeRightEdges[i]];
-            if (gResizeBottomEdges[i] && gResizeBottomEdges[i].superview == container)
-                [container bringSubviewToFront:gResizeBottomEdges[i]];
             [container bringSubviewToFront:gDragHandles[i]];
             gDragHandles[i].layer.zPosition = 9997;
             if (gCloseButtons[i] && gCloseButtons[i].superview == container) {
@@ -1602,26 +1596,23 @@ static CGPoint gPaneOffsets[3] = {{0, 0}, {0, 0}, {0, 0}};
 // handler reads these to compute the dragged position.
 static CGRect gPaneBaseFrames[3] = {CGRectZero, CGRectZero, CGRectZero};
 
-// Per-pane custom sizes from edge-resize gestures. CGSizeZero means
-// "use the Layout-computed default size". Non-zero overrides the width
-// and/or height so the pane keeps its user-resized dimensions.
-static CGSize gPaneCustomSizes[3] = {CGSizeZero, CGSizeZero, CGSizeZero};
 // Per-pane closed state: when the user taps the × button the pane is
-// hidden and its host slot torn down. Layout skips closed panes.
+// hidden and a capsule button appears. Tapping the capsule restores it.
 static BOOL gPaneClosed[3] = {NO, NO, NO};
-// gCloseButtons, gResizeRightEdges, gResizeBottomEdges: forward-declared
-// earlier (before BringHandleToFront).
+// gCloseButtons and gCapsules: forward-declared earlier (before BringHandleToFront).
 
-#pragma mark - Pane drag / close / resize gestures
+#pragma mark - Pane drag / close / capsule gestures
 
 @interface DashSplitDragHandler : NSObject
 - (void)handleDrag:(UIPanGestureRecognizer *)gesture;
-- (void)handleResize:(UIPanGestureRecognizer *)gesture;
+- (void)handleCapsuleDrag:(UIPanGestureRecognizer *)gesture;
 - (void)closeButtonTapped:(UIButton *)sender;
+- (void)capsuleTapped:(UIButton *)sender;
 @end
 
 // Forward declaration — TeardownSlot is defined later in the file.
 static void TeardownSlot(HostSlot *slot);
+static void RestoreSlot(int index);
 
 @implementation DashSplitDragHandler
 
@@ -1680,64 +1671,61 @@ static void TeardownSlot(HostSlot *slot);
     }
 }
 
-- (void)handleResize:(UIPanGestureRecognizer *)gesture
+- (void)handleCapsuleDrag:(UIPanGestureRecognizer *)gesture
 {
-    UIView *edge = gesture.view;
-    if (!edge) return;
+    UIButton *capsule = (UIButton *)gesture.view;
+    if (!capsule) return;
 
-    // Find which pane index this edge belongs to.
+    // Find which pane index this capsule belongs to.
     int paneIndex = -1;
-    BOOL isRightEdge = NO;
     for (int i = 0; i < 3; i++) {
-        if (gResizeRightEdges[i] == edge) { paneIndex = i; isRightEdge = YES; break; }
-        if (gResizeBottomEdges[i] == edge) { paneIndex = i; isRightEdge = NO; break; }
+        if (gCapsules[i] == capsule) { paneIndex = i; break; }
     }
     if (paneIndex < 0) return;
 
-    UIView *pane = gPanes[paneIndex];
-    if (!pane) return;
-
-    UIView *parent = pane.superview;
+    UIView *parent = capsule.superview;
     if (!parent) return;
 
-    CGPoint translation = [gesture translationInView:parent];
-
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        // Store the current size as the starting point for this resize.
-        gPaneCustomSizes[paneIndex] = pane.bounds.size;
-    }
-
     if (gesture.state == UIGestureRecognizerStateChanged) {
-        CGSize newSize = gPaneCustomSizes[paneIndex];
-        if (isRightEdge) {
-            newSize.width += translation.x;
-        } else {
-            newSize.height += translation.y;
-        }
-        // Clamp to minimum visible size.
-        CGFloat minSize = 80;
-        if (newSize.width < minSize) newSize.width = minSize;
-        if (newSize.height < minSize) newSize.height = minSize;
-        // Clamp to parent bounds.
-        CGFloat maxW = parent.bounds.size.width - pane.frame.origin.x;
-        CGFloat maxH = parent.bounds.size.height - pane.frame.origin.y;
-        if (newSize.width > maxW) newSize.width = maxW;
-        if (newSize.height > maxH) newSize.height = maxH;
+        CGPoint translation = [gesture translationInView:parent];
+        CGPoint center = capsule.center;
+        center.x += translation.x;
+        center.y += translation.y;
 
-        gPaneCustomSizes[paneIndex] = newSize;
+        // Clamp so the capsule stays fully visible within the parent.
+        CGFloat halfW = capsule.bounds.size.width / 2.0;
+        CGFloat halfH = capsule.bounds.size.height / 2.0;
+        if (center.x < halfW) center.x = halfW;
+        if (center.x > parent.bounds.size.width - halfW) center.x = parent.bounds.size.width - halfW;
+        if (center.y < halfH) center.y = halfH;
+        if (center.y > parent.bounds.size.height - halfH) center.y = parent.bounds.size.height - halfH;
 
-        // Apply the new size immediately.
-        CGRect f = pane.frame;
-        pane.frame = CGRectMake(f.origin.x, f.origin.y, newSize.width, newSize.height);
-        gPaneBaseFrames[paneIndex] = pane.frame;
-
-        // Update drag handle width.
-        if (gDragHandles[paneIndex]) {
-            gDragHandles[paneIndex].frame = CGRectMake(0, 0, newSize.width, 28);
-        }
-
+        capsule.center = center;
         [gesture setTranslation:CGPointZero inView:parent];
     }
+}
+
+// Get a short display name for the app in the given slot.
+static NSString *AppNameForSlot(int paneIndex)
+{
+    HostSlot *slot = gSlots[paneIndex];
+    if (!slot || !slot.bundleID) return @"App";
+    // Try LSApplicationProxy (available in SpringBoard's MobileCoreServices).
+    Class cls = NSClassFromString(@"LSApplicationProxy");
+    if (cls) {
+        id proxy = [cls performSelector:@selector(applicationProxyForIdentifier:) withObject:slot.bundleID];
+        if (proxy) {
+            NSString *name = [proxy performSelector:@selector(localizedName)];
+            if (name.length > 0) return name;
+        }
+    }
+    // Fallback: use the bundle ID's last component.
+    NSString *bid = slot.bundleID;
+    NSRange dotRange = [bid rangeOfString:@"." options:NSBackwardsSearch];
+    if (dotRange.location != NSNotFound) {
+        return [bid substringFromIndex:dotRange.location + 1];
+    }
+    return bid;
 }
 
 - (void)closeButtonTapped:(UIButton *)sender
@@ -1749,15 +1737,70 @@ static void TeardownSlot(HostSlot *slot);
     }
     if (paneIndex < 0) return;
 
-    CLog(@"close: pane[%d] closed by user", paneIndex);
+    CLog(@"close: pane[%d] minimized by user", paneIndex);
 
-    // Hide the pane and its overlay views.
+    // Hide the pane but DON'T tear down the slot — just stand it down
+    // from Live (mode 0) so it won't crash while hidden. The capsule
+    // lets the user restore it later.
     UIView *pane = gPanes[paneIndex];
     if (pane) pane.hidden = YES;
     gPaneClosed[paneIndex] = YES;
 
-    // Tear down the hosted app in this slot.
-    TeardownSlot(gSlots[paneIndex]);
+    // Stand the controller down from Live (safe, crash-proof).
+    SlotSetMode(paneIndex, 0);
+
+    // Show the capsule for this pane.
+    UIButton *cap = gCapsules[paneIndex];
+    if (cap) {
+        // Set the app name as title.
+        NSString *name = AppNameForSlot(paneIndex);
+        [cap setTitle:name forState:UIControlStateNormal];
+        [cap setTitle:name forState:UIControlStateHighlighted];
+        // Size to fit the text with padding.
+        [cap sizeToFit];
+        CGRect f = cap.frame;
+        f.size.width += 24;
+        f.size.height += 12;
+        cap.frame = f;
+        // Position at the pane's last known center, clamped to parent.
+        UIView *parent = pane.superview;
+        if (parent) {
+            CGRect baseFrame = gPaneBaseFrames[paneIndex];
+            CGPoint center = CGPointMake(baseFrame.origin.x + baseFrame.size.width / 2.0,
+                                         baseFrame.origin.y + baseFrame.size.height / 2.0);
+            CGFloat halfW = f.size.width / 2.0;
+            CGFloat halfH = f.size.height / 2.0;
+            if (center.x < halfW) center.x = halfW;
+            if (center.x > parent.bounds.size.width - halfW) center.x = parent.bounds.size.width - halfW;
+            if (center.y < halfH) center.y = halfH;
+            if (center.y > parent.bounds.size.height - halfH) center.y = parent.bounds.size.height - halfH;
+            cap.center = center;
+        }
+        cap.hidden = NO;
+    }
+}
+
+- (void)capsuleTapped:(UIButton *)sender
+{
+    // Find which pane index this capsule belongs to.
+    int paneIndex = -1;
+    for (int i = 0; i < 3; i++) {
+        if (gCapsules[i] == sender) { paneIndex = i; break; }
+    }
+    if (paneIndex < 0) return;
+
+    CLog(@"restore: pane[%d] restored from capsule", paneIndex);
+
+    // Hide the capsule.
+    sender.hidden = YES;
+
+    // Show the pane.
+    UIView *pane = gPanes[paneIndex];
+    if (pane) pane.hidden = NO;
+    gPaneClosed[paneIndex] = NO;
+
+    // Restore the slot to Live mode.
+    RestoreSlot(paneIndex);
 }
 
 @end
@@ -1784,11 +1827,12 @@ static void HidePanesAndStandDown(NSString *why)
     // Disable the UIScreen bounds hook so the system and other apps get
     // the real screen bounds while our panes are hidden.
     gNativeFillActive = NO;
-    for (int index = 0; index < count; index++) {
-        if (gPanes[index]) gPanes[index].hidden = YES;
-    }
-    for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
-    SetToggleGlyph(@"⟳");
+for (int index = 0; index < count; index++) {
+if (gPanes[index]) gPanes[index].hidden = YES;
+if (gCapsules[index]) gCapsules[index].hidden = YES;
+}
+for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+SetToggleGlyph(@"⟳");
     // Show the "请锁屏手机后显示" hint banner.
     if (gLockHintLabel) gLockHintLabel.hidden = NO;
     for (int index = 0; index < count; index++) {
@@ -1860,6 +1904,12 @@ static void ShowPanes(void)
 {
     int count = PaneCount();
     for (int index = 0; index < count; index++) {
+        // Don't show panes that were individually closed via × —
+        // they stay hidden with their capsule visible.
+        if (gPaneClosed[index]) {
+            if (gPanes[index]) gPanes[index].hidden = YES;
+            continue;
+        }
         if (gPanes[index]) gPanes[index].hidden = NO;
     }
     for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
@@ -1887,12 +1937,25 @@ static void RestoreNow(void)
     gUserClosed = NO;
     int count = PaneCount();
     for (int index = 0; index < count; index++) {
+        // Don't show panes that were individually closed via × —
+        // they stay hidden with their capsule visible.
+        if (gPaneClosed[index]) {
+            if (gPanes[index]) gPanes[index].hidden = YES;
+            continue;
+        }
         if (gPanes[index]) gPanes[index].hidden = NO;
     }
     for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
     if (gLockHintLabel) gLockHintLabel.hidden = YES;
     SetToggleGlyph(@"✕");
     for (int index = 0; index < count; index++) {
+        if (gPaneClosed[index]) {
+            // Slot was stood down to mode 0 by closeButtonTapped.
+            // Don't restore to Live while the pane is hidden — just
+            // re-show the capsule so the user can restore it manually.
+            if (gCapsules[index]) gCapsules[index].hidden = NO;
+            continue;
+        }
         RestoreSlot(index);
     }
     CLog(@"ui: overlay restored");
@@ -2139,15 +2202,8 @@ static void Layout(void)
                 continue;
             }
 
-            CGFloat scaledW, scaledH;
-            // If the user has a custom size (from edge-resize), use it.
-            if (gPaneCustomSizes[index].width > 0 || gPaneCustomSizes[index].height > 0) {
-                scaledW = gPaneCustomSizes[index].width;
-                scaledH = gPaneCustomSizes[index].height;
-            } else {
-                scaledW = floor(widths[index] * scale);
-                scaledH = floor(bounds.size.height * scale);
-            }
+            CGFloat scaledW = floor(widths[index] * scale);
+            CGFloat scaledH = floor(bounds.size.height * scale);
             // Compute the unscaled center, then place the scaled frame
             // so that its center matches the unscaled center.
             CGFloat unscaledCenterX = sideMargin + origins[index] + widths[index] / 2.0;
@@ -2173,14 +2229,6 @@ static void Layout(void)
             // Position the close button at the top-right corner.
             if (gCloseButtons[index]) {
                 gCloseButtons[index].frame = CGRectMake(scaledW - 28, 0, 28, 28);
-            }
-            // Position the right resize edge.
-            if (gResizeRightEdges[index]) {
-                gResizeRightEdges[index].frame = CGRectMake(scaledW - 8, 0, 8, scaledH);
-            }
-            // Position the bottom resize edge.
-            if (gResizeBottomEdges[index]) {
-                gResizeBottomEdges[index].frame = CGRectMake(0, scaledH - 8, scaledW, 8);
             }
         }
     }
@@ -2372,7 +2420,6 @@ UIColor *paneColor = [UIColor clearColor];
 
         // Reset closed state — new interface starts with all panes visible.
         gPaneClosed[index] = NO;
-        gPaneCustomSizes[index] = CGSizeZero;
 
         // Close button (×) at the top-right corner of the pane.
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -2390,29 +2437,27 @@ UIColor *paneColor = [UIColor clearColor];
         [gPanes[index] addSubview:closeBtn];
         gCloseButtons[index] = closeBtn;
 
-        // Right resize edge: an 8px wide strip on the right side of the pane.
-        UIView *rightEdge = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 8, 0)];
-        rightEdge.backgroundColor = [UIColor clearColor];
-        rightEdge.userInteractionEnabled = YES;
-        rightEdge.autoresizingMask = UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleLeftMargin;
-        rightEdge.layer.zPosition = 9996;
-        UIPanGestureRecognizer *resizeR = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
-                                                                                    action:@selector(handleResize:)];
-        [rightEdge addGestureRecognizer:resizeR];
-        [gPanes[index] addSubview:rightEdge];
-        gResizeRightEdges[index] = rightEdge;
-
-        // Bottom resize edge: an 8px tall strip at the bottom of the pane.
-        UIView *bottomEdge = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, 8)];
-        bottomEdge.backgroundColor = [UIColor clearColor];
-        bottomEdge.userInteractionEnabled = YES;
-        bottomEdge.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
-        bottomEdge.layer.zPosition = 9996;
-        UIPanGestureRecognizer *resizeB = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
-                                                                                    action:@selector(handleResize:)];
-        [bottomEdge addGestureRecognizer:resizeB];
-        [gPanes[index] addSubview:bottomEdge];
-        gResizeBottomEdges[index] = bottomEdge;
+        // Capsule button: shown when the pane is closed via ×. Displays
+        // the app name, is draggable, and tapping it restores the pane.
+        // Added to addTarget (the parent view), not the pane itself, so
+        // it stays visible when the pane is hidden.
+        UIButton *capsule = [UIButton buttonWithType:UIButtonTypeCustom];
+        [capsule setTitle:@"App" forState:UIControlStateNormal];
+        [capsule setTitle:@"App" forState:UIControlStateHighlighted];
+        capsule.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        [capsule setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [capsule setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
+        capsule.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.85];
+        capsule.layer.cornerRadius = 14;
+        capsule.layer.zPosition = 9999;  // above everything
+        capsule.hidden = YES;  // hidden until the user closes the pane
+        capsule.userInteractionEnabled = YES;
+        [capsule addTarget:gDragHandler action:@selector(capsuleTapped:) forControlEvents:UIControlEventTouchUpInside];
+        UIPanGestureRecognizer *capPan = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
+                                                                                   action:@selector(handleCapsuleDrag:)];
+        [capsule addGestureRecognizer:capPan];
+        [addTarget addSubview:capsule];
+        gCapsules[index] = capsule;
     }
     
 // Create divider lines — removed: panes are now draggable so
@@ -2707,7 +2752,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.47 loaded ---");
+        CLog(@"--- DashSplit 0.1.48 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

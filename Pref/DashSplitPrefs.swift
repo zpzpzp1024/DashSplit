@@ -25,7 +25,7 @@ private let keySplitRatio3 = "SplitRatio3"
 private let keyPaneScale = "PaneScale"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.47"
+private let tweakVersion = "0.1.48"
 
 // Uninstallable system apps: the defaults must exist on every device.
 private let defaultLeft = "com.apple.mobiletimer"   // 时钟
