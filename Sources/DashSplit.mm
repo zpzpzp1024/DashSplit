@@ -2054,11 +2054,7 @@ static void Layout(void)
             }
         }
     }
-    for (int i = 0; i < count - 1 && i < 2; i++) {
-        if (gDividers[i]) {
-            gDividers[i].frame = CGRectMake(sideMargin + origins[i] + widths[i], 0, 2, bounds.size.height);
-        }
-    }
+// Divider layout — removed (no longer created).
     
     // Toggle button sits at the very top-left corner of the WHOLE display
     // (window coordinates), not the left pane, so it never covers hosted
@@ -2237,13 +2233,9 @@ static void CreateInterface(BOOL testMode)
         gDragHandles[index] = handle;
     }
     
-    // Create divider lines (one per gap between adjacent panes).
-    for (int i = 0; i < count - 1 && i < 2; i++) {
-        gDividers[i] = [[UIView alloc] initWithFrame:CGRectZero];
-        gDividers[i].backgroundColor = [UIColor whiteColor];
-        gDividers[i].userInteractionEnabled = NO;
-        [addTarget addSubview:gDividers[i]];
-    }
+// Create divider lines — removed: panes are now draggable so
+// visual separators are no longer needed.
+// (gDividers array kept for teardown compatibility but never populated.)
     
     // Toggle button — always visible, lets user hide/show the panes.
     // Custom type with identical colors for every state: the button must look

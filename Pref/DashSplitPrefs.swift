@@ -627,11 +627,11 @@ final class DashSplitPrefListController: PSListController {
                 specifiers.add(modeRow)
             }
 
-            // 分屏应用 + 分屏比例 + 应用设置 合并为一组
+            // 分屏应用 + 分屏比例 + 缩放比例(全局) 合并为一组
             SpecifierFactory.add([
                 GroupCell(
                     name: "分屏应用与比例",
-                    footerText: "点进去选择 App;拖动滑块设置每屏占比(1-5);2分屏只需设第1屏,第2屏自动取剩余;3分屏可分别设3个屏;不设则用默认(2分屏1:2,3分屏1:1:1);1分屏无需设置。更改后重启 SpringBoard 生效;同一个 App 只投第一个出现的区域。"
+                    footerText: "点进去选择 App;拖动滑块设置每屏占比(1-5);2分屏只需设第1屏,第2屏自动取剩余;3分屏可分别设3个屏;不设则用默认(2分屏1:2,3分屏1:1:1);1分屏无需设置。缩放比例为全局设置:以中心点为锚,四周等比缩小整个蓝色遮罩容器(宽和高同时缩放),1.0=原始大小,0.5=缩小一半。更改后重启 SpringBoard 生效;同一个 App 只投第一个出现的区域。"
                 )
             ], to: &specifiers, in: self)
             if let left = paneRow("第1屏应用", current: currentSelection(keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
@@ -664,20 +664,25 @@ final class DashSplitPrefListController: PSListController {
                 }
             }
 
+            // 全局缩放比例 — 用一个带标题的分组做分隔线
+            SpecifierFactory.add([
+                GroupCell(name: "全局缩放", footerText: "")
+            ], to: &specifiers, in: self)
+            // 缩放比例: 整数 10-100, 除以 100 得到实际缩放因子 0.1-1.0
+            SpecifierFactory.add([
+                SliderCell(name: "缩放比例", key: keyPaneScale, defaultValue: 100, range: 10..<101)
+            ], to: &specifiers, in: self)
+
             // 显示模式 + 测试 合并为一组
             SpecifierFactory.add([
                 GroupCell(
                     name: "显示与测试",
-                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。缩放比例:以中心点为锚,四周等比缩小整个蓝色遮罩容器(宽和高同时缩放),1.0=原始大小,0.5=缩小一半。测试模式不连 CarPlay 直接预览。更改后重启 SpringBoard 生效。"
+                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。测试模式不连 CarPlay 直接预览。更改后重启 SpringBoard 生效。"
                 )
             ], to: &specifiers, in: self)
             if let fitRow = linkRow("显示模式:\(fitModeName())", detail: DashSplitFitModePicker.self) {
                 specifiers.add(fitRow)
             }
-            // 缩放比例: 整数 10-100, 除以 100 得到实际缩放因子 0.1-1.0
-            SpecifierFactory.add([
-                SliderCell(name: "缩放比例", key: keyPaneScale, defaultValue: 100, range: 10..<101)
-            ], to: &specifiers, in: self)
             // 横屏/竖屏预览测试选项
             let testOrient = currentTestLandscape() ? "横屏预览" : "竖屏预览"
             if let orientRow = linkRow("预览方向:\(testOrient)", detail: DashSplitTestOrientPicker.self) {
