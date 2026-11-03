@@ -677,7 +677,7 @@ static void SlotSetMode(int index, NSInteger mode)
 // Hosting an app scene from our own window makes SpringBoard raise
 // NSInternalInconsistencyException ("Something changed the scene's ...
 // foreground status out from underneath us") whenever another party
-// (CarBridge, the phone UI, or the launch path itself) flips the scene's
+// (the phone UI, or the launch path itself) flips the scene's
 // foreground flag while our SBAppViewController still holds Live mode.
 // The exception aborts SpringBoard — the 0.0.20 crash loop in DashSplit-3.log.
 // Swallow exactly that assertion while we are hosting, and resync our
@@ -1007,8 +1007,6 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
     // display mode. The private method _updateReferenceSize:andOrientation: on
     // SBDeviceApplicationSceneView tells the scene to lay out at the given
     // dimensions — discovered via method enumeration on the device.
-    // This is the SpringBoard-native equivalent of CarBridge's
-    // setContentReferenceSize:withInterfaceOrientation:.
     if (FitMode() == 2 && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
         id sceneView = Call0(viewController, @"appView");
         if (sceneView) {
@@ -1155,18 +1153,17 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
     }
     
     if (fitMode == 2) {
-        // Native fill — CarBridge-style scene content reference size +
+        // Native fill — scene content reference size +
         // UIScreen.bounds hook + contentView bounds + layout.
         //
         // The App's internal layout engine reads UIScreen.bounds (NOT the
         // superview bounds) to determine its root view size. Without the
         // hook, the App lays out at 414x896 (phone) and gets cropped.
         //
-        // CarBridge approach: call setContentReferenceSize:withInterfaceOrientation:
-        // on the SBApplicationSceneView to set the scene's content reference
-        // size to the pane dimensions, so the App lays out at pane size from
-        // the start. Also hook UIScreen.bounds as a fallback for apps that
-        // read it directly.
+        // Call _updateReferenceSize:andOrientation: on the scene view to
+        // set the scene's content reference size to the pane dimensions,
+        // so the App lays out at pane size from the start.
+        // Also hook UIScreen.bounds as a fallback for apps that read it directly.
         int paneIndex = -1;
         for (int i = 0; i < 3; i++) {
             if (gSlots[i] && gSlots[i].container == container) {
@@ -1196,7 +1193,7 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
             }
         }
 
-        // Also try setAppFrame: on the device controller (CarBridge uses this).
+        // Also try setAppFrame: on the device controller.
         if (deviceController) {
             SEL appFrameSel = NSSelectorFromString(@"setAppFrame:");
             if ([deviceController respondsToSelector:appFrameSel]) {
