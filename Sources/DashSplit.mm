@@ -107,29 +107,16 @@
 #define COCKPIT_NEWSCENE "/var/mobile/Library/Preferences/zp.dashsplit.newscene"
 #define COCKPIT_CRASHCOUNT "/var/mobile/Library/Preferences/zp.dashsplit.crashcount"
 
-static NSString *const kPrefsHostApp  = @"HostBundleID";
-static NSString *const kPrefsHostApp2 = @"HostBundleID2";
-static NSString *const kPrefsHostApp3 = @"HostBundleID3";
+// Maximum number of panes (apps) supported simultaneously.
+#define MAX_PANES 8
+
+static NSString *const kPrefsHostApps = @"SelectedApps";  // comma-separated bundle IDs
 static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
 static NSString *const kPrefsTestLandscape = @"TestLandscape";
 static NSString *const kPrefsStretchFill = @"StretchFill";
-// Fit mode: 0 = aspect-fit (default), 1 = stretch fill, 2 = native fill (hook UIScreen.bounds)
+// Fit mode: 0 = aspect-fit (default), 1 = stretch fill
 static NSString *const kPrefsFitMode = @"FitMode";
-static NSString *const kPrefsSplitMode = @"SplitMode";
-// Split ratio: integer (1-5) for each pane's relative weight. 0 means
-// "default" — auto 1:2 in 2-split, 1:1:1 in 3-split, ignored in 1-split.
-static NSString *const kPrefsSplitRatio = @"SplitRatio";
-static NSString *const kPrefsSplitRatio2 = @"SplitRatio2"; // 3-split: pane2 share
-static NSString *const kPrefsSplitRatio3 = @"SplitRatio3"; // 3-split: pane3 share
-// Pane scale: integer 10-100, divided by 100 to get the actual scale factor
-// (0.1 - 1.0). Scales the entire pane container (width AND height) equally.
-static NSString *const kPrefsPaneScale = @"PaneScale";
-
-// Uninstallable system apps: the defaults must exist on every device.
-static NSString *const kDefaultHost1 = @"com.apple.mobiletimer";   // 时钟
-static NSString *const kDefaultHost2 = @"com.apple.mobilecal";     // 日历
-static NSString *const kDefaultHost3 = @"com.apple.calculator";    // 计算器
 
 #pragma mark - Logging
 
@@ -296,95 +283,81 @@ static int FitMode(void)
     return 0;
 }
 
-// Split mode: 1 = single app (no split), 2 = two-way split (default), 3 = three-way split.
-static int SplitMode(void)
+// Selected apps: comma-separated bundle IDs in the SelectedApps pref.
+// Returns an array of bundle ID strings (up to MAX_PANES).
+static NSArray<NSString *> *SelectedBundleIDs(void)
 {
-    int mode = (int)PrefInteger(kPrefsSplitMode, 2);
-    if (mode < 1) return 2;
-    if (mode > 3) return 3;
-    return mode;
-}
-
-// Split ratios: each pane's relative weight. Defaults are 0 (meaning
-// "use built-in defaults": 1:2 in 2-split, 1:1:1 in 3-split). The values
-// are integers 1-5 representing relative proportions; the Layout function
-// normalises them to actual pixel widths. 1-split ignores ratios entirely.
-static void SplitRatios(int count, int ratios[3])
-{
-    int r1 = (int)PrefInteger(kPrefsSplitRatio, 0);
-    int r2 = (int)PrefInteger(kPrefsSplitRatio2, 0);
-    int r3 = (int)PrefInteger(kPrefsSplitRatio3, 0);
-
-    if (count <= 1) {
-        // 1-split: single pane takes everything.
-        ratios[0] = 1;
-    } else if (count == 2) {
-        // 2-split: use r1 for pane1, r2 (if set) for pane2. If r2 is 0 but
-        // r1 is set, pane2 gets the complement (6-r1) to keep total 6. If
-        // both 0, default 1:2.
-        if (r1 > 0) {
-            ratios[0] = r1;
-            ratios[1] = (r2 > 0) ? r2 : (6 - r1);
-            if (ratios[1] < 1) ratios[1] = 1;
-        } else {
-            ratios[0] = 1;  // default 1:2
-            ratios[1] = 2;
-        }
-    } else {
-        // 3-split: if any set use them; if none set, equal (1:1:1).
-        if (r1 > 0 || r2 > 0 || r3 > 0) {
-            ratios[0] = r1 > 0 ? r1 : 1;
-            ratios[1] = r2 > 0 ? r2 : 1;
-            ratios[2] = r3 > 0 ? r3 : 1;
-        } else {
-            ratios[0] = 1;
-            ratios[1] = 1;
-            ratios[2] = 1;
+    NSString *raw = PrefString(kPrefsHostApps);
+    if (!raw.length) {
+        // Defaults: 时钟 + 日历
+        raw = @"com.apple.mobiletimer,com.apple.mobilecal";
+    }
+    NSMutableArray *ids = [NSMutableArray array];
+    for (NSString *part in [raw componentsSeparatedByString:@","]) {
+        NSString *trimmed = [part stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (trimmed.length && ids.count < MAX_PANES) {
+            [ids addObject:trimmed];
         }
     }
+    return ids;
 }
 
+// Number of selected apps (capped at MAX_PANES).
 static int PaneCount(void)
 {
-    return SplitMode();
+    return (int)SelectedBundleIDs().count;
 }
 
-// Pane scale: integer 10-100 stored in prefs, divided by 100 to get the
-// actual scale factor (0.1 - 1.0). Default is 100 (1.0 = no scaling).
-// Scales the entire pane container (width AND height) equally, keeping
-// the CENTER fixed — the pane shrinks towards its center from all sides.
-static CGFloat PaneScale(void)
+// Bundle ID for a given pane index.
+static NSString *HostBundleIDForIndex(int index)
 {
-    int raw = (int)PrefInteger(kPrefsPaneScale, 100);
+    NSArray *ids = SelectedBundleIDs();
+    if (index < 0 || index >= (int)ids.count) return @"";
+    return ids[index];
+}
+
+// Per-app ratio: integer 1-5 from AppRatio_<bundleID> pref. Default 1.
+static int AppRatioForIndex(int index)
+{
+    NSString *bid = HostBundleIDForIndex(index);
+    if (!bid.length) return 1;
+    NSString *key = [NSString stringWithFormat:@"AppRatio_%@", bid];
+    int r = (int)PrefInteger(key, 1);
+    if (r < 1) r = 1;
+    if (r > 5) r = 5;
+    return r;
+}
+
+// Per-app scale: integer 10-100 from AppScale_<bundleID> pref. Default 100.
+static CGFloat AppScaleForIndex(int index)
+{
+    NSString *bid = HostBundleIDForIndex(index);
+    if (!bid.length) return 1.0f;
+    NSString *key = [NSString stringWithFormat:@"AppScale_%@", bid];
+    int raw = (int)PrefInteger(key, 100);
     if (raw < 10) raw = 10;
     if (raw > 100) raw = 100;
     return (CGFloat)raw / 100.0f;
 }
 
-static NSString *HostBundleID1(void)
+// Get app display name via LSApplicationProxy.
+static NSString *AppDisplayName(NSString *bundleID)
 {
-    NSString *bundleID = PrefString(kPrefsHostApp);
-    if (bundleID.length) return bundleID;
-    
-    NSString *text = [NSString stringWithContentsOfFile:@COCKPIT_HOST encoding:NSUTF8StringEncoding error:nil];
-    text = [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (text.length) return text;
-    
-    return kDefaultHost1;
-}
-
-static NSString *HostBundleID2(void)
-{
-    NSString *bundleID = PrefString(kPrefsHostApp2);
-    if (bundleID.length) return bundleID;
-    return kDefaultHost2;
-}
-
-static NSString *HostBundleID3(void)
-{
-    NSString *bundleID = PrefString(kPrefsHostApp3);
-    if (bundleID.length) return bundleID;
-    return kDefaultHost3;
+    if (!bundleID.length) return @"App";
+    Class cls = NSClassFromString(@"LSApplicationProxy");
+    if (cls) {
+        id proxy = [cls performSelector:@selector(applicationProxyForIdentifier:) withObject:bundleID];
+        if (proxy) {
+            NSString *name = [proxy performSelector:@selector(localizedName)];
+            if (name.length > 0) return name;
+        }
+    }
+    // Fallback: last component of bundle ID
+    NSRange dotRange = [bundleID rangeOfString:@"." options:NSBackwardsSearch];
+    if (dotRange.location != NSNotFound) {
+        return [bundleID substringFromIndex:dotRange.location + 1];
+    }
+    return bundleID;
 }
 
 static void LogPrefsState(void)
@@ -401,19 +374,14 @@ static void LogPrefsState(void)
          prefs != nil,
          (unsigned long)prefs.count);
     
-    CLog(@"prefs: testMarker=%d hostFile=%d enabled=%d testMode=%d splitMode=%d host1=%@ host2=%@ host3=%@",
+    CLog(@"prefs: testMarker=%d hostFile=%d enabled=%d testMode=%d apps=%@",
          FileExists(@COCKPIT_TEST),
          FileExists(@COCKPIT_HOST),
          PrefBool(kPrefsEnabled, YES),
          TestModeEnabled(),
-         SplitMode(),
-         HostBundleID1(),
-         HostBundleID2(),
-         HostBundleID3());
+         SelectedBundleIDs());
 
-    CLog(@"prefs: fitMode=%d paneScale=%.2f",
-         FitMode(),
-         PaneScale());
+    CLog(@"prefs: fitMode=%d", FitMode());
 }
 
 #pragma mark - Runtime helpers
@@ -641,7 +609,7 @@ static void DumpProbe(void)
 @implementation HostSlot
 @end
 
-static HostSlot *gSlots[3];
+static HostSlot *gSlots[MAX_PANES];
 static BOOL gUserClosed = NO;
 
 // 0.1.23 manual-start state (see header note). gConnectAt marks when the car
@@ -1052,7 +1020,7 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
 // The hook is always installed but only redirects when gNativeFillActive
 // is YES, so non-native modes are zero-cost (the original is called directly).
 static BOOL gNativeFillActive = NO;
-static CGSize gNativeFillSizes[3] = {CGSizeZero, CGSizeZero, CGSizeZero};  // per-pane sizes
+static CGSize gNativeFillSizes[MAX_PANES];  // per-pane sizes
 static int gNativeFillCurrentPane = 0;  // which pane is currently being fitted (default 0)
 static IMP gOrigUIScreenBounds;
 
@@ -1184,7 +1152,7 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         // so the App lays out at pane size from the start.
         // Also hook UIScreen.bounds as a fallback for apps that read it directly.
         int paneIndex = -1;
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < MAX_PANES; i++) {
             if (gSlots[i] && gSlots[i].container == container) {
                 paneIndex = i;
                 break;
@@ -1286,10 +1254,10 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
 
 // Forward declaration: gDragHandles is defined later in the file, but
 // BringHandleToFront (below) needs to reference it.
-static UIView *gDragHandles[3];
-static UIButton *gCloseButtons[3];
+static UIView *gDragHandles[MAX_PANES];
+static UIButton *gCloseButtons[MAX_PANES];
 // Capsule buttons shown when a pane is closed via ×. Tapping restores the pane.
-static UIButton *gCapsules[3];
+static UIButton *gCapsules[MAX_PANES];
 
 // Re-bring the drag handle to the front of the pane's subview stack.
 // The hosted appView is added via addSubview after the handle, which
@@ -1299,7 +1267,7 @@ static UIButton *gCapsules[3];
 static void BringHandleToFront(UIView *container)
 {
     if (!container) return;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MAX_PANES; i++) {
         if (gDragHandles[i] && gDragHandles[i].superview == container) {
             [container bringSubviewToFront:gDragHandles[i]];
             gDragHandles[i].layer.zPosition = 9997;
@@ -1556,10 +1524,10 @@ static void TeardownAllHosts(void)
     // stale hooked size corrupts the next interface's window creation.
     gNativeFillActive = NO;
     gNativeFillCurrentPane = -1;
-    for (int i = 0; i < 3; i++) gNativeFillSizes[i] = CGSizeZero;
+    for (int i = 0; i < MAX_PANES; i++) gNativeFillSizes[i] = CGSizeZero;
     // Teardown ALL slots (not just PaneCount()) — when switching from 3-split
     // to 2-split, slot[2] must be torn down even though PaneCount() is now 2.
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MAX_PANES; i++) {
         if (gSlots[i]) {
             TeardownSlot(gSlots[i]);
             gSlots[i] = nil;
@@ -1577,9 +1545,9 @@ static void TeardownAllHosts(void)
 #pragma mark - UI
 
 static UIWindow *gWindow;
-static UIView *gPanes[3];
+static UIView *gPanes[MAX_PANES];
 // gDragHandles[3] is forward-declared earlier (before BringHandleToFront).
-static UIView *gDividers[2];  // up to 2 dividers for 3-pane split
+static UIView *gDividers[MAX_PANES]; // kept for teardown compat, unused  // up to 2 dividers for 3-pane split
 static UIView *gTestContainer;  // rotated container for landscape test preview
 static BOOL gTestMode;
 static BOOL gTestLandscape;  // tracks the TestLandscape pref of the active test interface
@@ -1591,14 +1559,14 @@ static int gCurrentPaneCount = 0;  // pane count of the currently active interfa
 // The drag gesture handler moves panes independently; Layout adds these
 // offsets to the base frame so a re-layout (e.g. split-mode change) does
 // not fight the user's drag — it resets offsets to zero instead.
-static CGPoint gPaneOffsets[3] = {{0, 0}, {0, 0}, {0, 0}};
+static CGPoint gPaneOffsets[MAX_PANES];
 // The Layout-assigned frames (before drag offset is applied). The drag
 // handler reads these to compute the dragged position.
-static CGRect gPaneBaseFrames[3] = {CGRectZero, CGRectZero, CGRectZero};
+static CGRect gPaneBaseFrames[MAX_PANES];
 
 // Per-pane closed state: when the user taps the × button the pane is
 // hidden and a capsule button appears. Tapping the capsule restores it.
-static BOOL gPaneClosed[3] = {NO, NO, NO};
+static BOOL gPaneClosed[MAX_PANES];
 // gCloseButtons and gCapsules: forward-declared earlier (before BringHandleToFront).
 
 #pragma mark - Pane drag / close / capsule gestures
@@ -1623,7 +1591,7 @@ static void RestoreSlot(int index);
 
     // Find which pane index this handle belongs to.
     int paneIndex = -1;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MAX_PANES; i++) {
         if (gDragHandles[i] == handle) { paneIndex = i; break; }
     }
     if (paneIndex < 0) return;
@@ -1678,7 +1646,7 @@ static void RestoreSlot(int index);
 
     // Find which pane index this capsule belongs to.
     int paneIndex = -1;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MAX_PANES; i++) {
         if (gCapsules[i] == capsule) { paneIndex = i; break; }
     }
     if (paneIndex < 0) return;
@@ -1710,29 +1678,14 @@ static NSString *AppNameForSlot(int paneIndex)
 {
     HostSlot *slot = gSlots[paneIndex];
     if (!slot || !slot.bundleID) return @"App";
-    // Try LSApplicationProxy (available in SpringBoard's MobileCoreServices).
-    Class cls = NSClassFromString(@"LSApplicationProxy");
-    if (cls) {
-        id proxy = [cls performSelector:@selector(applicationProxyForIdentifier:) withObject:slot.bundleID];
-        if (proxy) {
-            NSString *name = [proxy performSelector:@selector(localizedName)];
-            if (name.length > 0) return name;
-        }
-    }
-    // Fallback: use the bundle ID's last component.
-    NSString *bid = slot.bundleID;
-    NSRange dotRange = [bid rangeOfString:@"." options:NSBackwardsSearch];
-    if (dotRange.location != NSNotFound) {
-        return [bid substringFromIndex:dotRange.location + 1];
-    }
-    return bid;
+    return AppDisplayName(slot.bundleID);
 }
 
 - (void)closeButtonTapped:(UIButton *)sender
 {
     // Find which pane index this close button belongs to.
     int paneIndex = -1;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MAX_PANES; i++) {
         if (gCloseButtons[i] == sender) { paneIndex = i; break; }
     }
     if (paneIndex < 0) return;
@@ -1784,7 +1737,7 @@ static NSString *AppNameForSlot(int paneIndex)
 {
     // Find which pane index this capsule belongs to.
     int paneIndex = -1;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MAX_PANES; i++) {
         if (gCapsules[i] == sender) { paneIndex = i; break; }
     }
     if (paneIndex < 0) return;
@@ -1807,13 +1760,10 @@ static NSString *AppNameForSlot(int paneIndex)
 
 static DashSplitDragHandler *gDragHandler;
 
-// The toggle glyph must be set on BOTH normal and highlighted states —
-// otherwise the press shows the stale title from the other state.
+// Toggle button removed — SetToggleGlyph is now a no-op kept for compatibility.
 static void SetToggleGlyph(NSString *glyph)
 {
-    if (!gToggleButton) return;
-    [gToggleButton setTitle:glyph forState:UIControlStateNormal];
-    [gToggleButton setTitle:glyph forState:UIControlStateHighlighted];
+    // No-op: toggle button no longer exists.
 }
 
 // 0.1.27: the hide half of the toggle, extracted so the phone-unlock
@@ -1831,7 +1781,7 @@ for (int index = 0; index < count; index++) {
 if (gPanes[index]) gPanes[index].hidden = YES;
 if (gCapsules[index]) gCapsules[index].hidden = YES;
 }
-for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
 SetToggleGlyph(@"⟳");
     // Show the "请锁屏手机后显示" hint banner.
     if (gLockHintLabel) gLockHintLabel.hidden = NO;
@@ -1875,10 +1825,7 @@ static void RestoreSlot(int index)
 static void HostAllPanes(BOOL testMode)
 {
     int count = PaneCount();
-    NSString *bid1 = HostBundleID1();
-    NSString *bid2 = HostBundleID2();
-    NSString *bid3 = HostBundleID3();
-    NSArray *bidArr = [NSArray arrayWithObjects:bid1, bid2, bid3, nil];
+    NSArray *bidArr = SelectedBundleIDs();
     
     NSMutableString *hostLog = [NSMutableString string];
     for (int index = 0; index < count; index++) {
@@ -1889,7 +1836,7 @@ static void HostAllPanes(BOOL testMode)
     
     NSMutableArray *seenBIDs = [NSMutableArray array];
     for (int index = 0; index < count; index++) {
-        NSString *bid = bidArr[index];
+        NSString *bid = HostBundleIDForIndex(index);
         if (bid.length == 0) continue;
         if ([seenBIDs containsObject:bid]) {
             CLog(@"ui: pane %d set to %@ (duplicate, skipping)", index, bid);
@@ -1912,7 +1859,7 @@ static void ShowPanes(void)
         }
         if (gPanes[index]) gPanes[index].hidden = NO;
     }
-    for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
+    for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = NO;
     if (gLockHintLabel) gLockHintLabel.hidden = YES;
     SetToggleGlyph(@"✕");
 }
@@ -1945,7 +1892,7 @@ static void RestoreNow(void)
         }
         if (gPanes[index]) gPanes[index].hidden = NO;
     }
-    for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = NO;
+    for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = NO;
     if (gLockHintLabel) gLockHintLabel.hidden = YES;
     SetToggleGlyph(@"✕");
     for (int index = 0; index < count; index++) {
@@ -1982,7 +1929,7 @@ static void RestoreNow(void)
         gWindow = nil;
         int count = PaneCount();
 for (int i = 0; i < count; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
-for (int i = 0; i < 2; i++) gDividers[i] = nil;
+for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
@@ -2082,7 +2029,7 @@ static void HandleLockStateChanged(int token)
             for (int index = 0; index < count; index++) {
                 if (gPanes[index]) gPanes[index].hidden = YES;
             }
-            for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+            for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
             SetToggleGlyph(@"▶");
             CLog(@"lock: pending start cancelled on unlock — tap ▶ again later");
         }
@@ -2133,49 +2080,35 @@ static void Layout(void)
     if (!gWindow) return;
     
     int count = PaneCount();
+    if (count == 0) return;
     
-    // In test mode the panes live inside gTestContainer which is rotated 90°
-    // clockwise to simulate a landscape car display on the portrait phone.
-    // The container's bounds are swapped (width=screen height, height=screen
-    // width), so Layout uses those as the effective landscape dimensions.
-    // In portrait test mode gTestContainer is nil — panes are added directly
-    // to the window, so we use the window bounds instead.
     UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
     CGRect bounds = host.bounds;
     
-    CLog(@"layout: host=%@ bounds=%@ testMode=%d testContainer=%@",
+    CLog(@"layout: host=%@ bounds=%@ testMode=%d testContainer=%@ count=%d",
          NSStringFromClass([host class]),
          NSStringFromCGRect(bounds),
          gTestMode,
-         gTestContainer ? NSStringFromCGRect(gTestContainer.bounds) : @"(nil)");
+         gTestContainer ? NSStringFromCGRect(gTestContainer.bounds) : @"(nil)",
+         count);
     
-    // Both test mode and car mode use the same horizontal split logic:
-    // leave the leftmost strip for a system sidebar, then split the remaining
-    // width into N columns based on user-configurable ratios.
-    //
-    // Test mode simulates a landscape car display by computing a sideMargin
-    // proportional to the screen, giving the same visual layout as the car.
-    //
-    // Pane fill width: 3-split fills the entire usable width (apps side by
-    // side already fill the screen). 2-split uses 2/3 so the right 1/3 stays
-    // uncovered. 1-split uses 1/3 so a single app pane sits on the left
-    // without masking the underlying CarPlay UI to its right.
-    CGFloat sideMargin = floor(bounds.size.width / 13.0);
-    CGFloat fullWidth = bounds.size.width - sideMargin;
-    CGFloat fillFraction = (count >= 3) ? 1.0 : (count == 2 ? 2.0/3.0 : 1.0/3.0);
-    CGFloat usable = floor(fullWidth * fillFraction);
+    // Full width usage — all panes share the screen side by side.
+    // Leave a small side margin for aesthetics.
+    CGFloat sideMargin = floor(bounds.size.width / 26.0);
+    CGFloat usable = bounds.size.width - sideMargin * 2;
 
-    // Get user-configured split ratios (falls back to defaults when unset).
-    int ratios[3] = {0};
-    SplitRatios(count, ratios);
-
-    // Normalise ratios to pixel widths. The last pane absorbs any rounding
-    // remainder so the panes fill the full usable width without gaps.
-    CGFloat origins[3];
-    CGFloat widths[3];
+    // Per-app ratios from prefs (1-5 each, default 1).
+    int ratios[MAX_PANES];
     int totalRatio = 0;
-    for (int i = 0; i < count; i++) totalRatio += ratios[i];
+    for (int i = 0; i < count; i++) {
+        ratios[i] = AppRatioForIndex(i);
+        totalRatio += ratios[i];
+    }
+    if (totalRatio == 0) totalRatio = count;  // safety
 
+    // Normalise ratios to pixel widths.
+    CGFloat origins[MAX_PANES];
+    CGFloat widths[MAX_PANES];
     CGFloat accumulated = 0;
     for (int i = 0; i < count; i++) {
         origins[i] = accumulated;
@@ -2184,15 +2117,9 @@ static void Layout(void)
             widths[i] = w;
             accumulated += w;
         } else {
-            // Last pane: take everything that's left.
             widths[i] = usable - accumulated;
         }
     }
-
-    // Pane scale: shrink the entire pane container (width + height) by
-    // this factor, keeping the CENTER fixed — the pane shrinks equally
-    // towards its center from all four sides.
-    CGFloat scale = PaneScale();
 
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
@@ -2202,18 +2129,16 @@ static void Layout(void)
                 continue;
             }
 
+            // Per-app scale.
+            CGFloat scale = AppScaleForIndex(index);
             CGFloat scaledW = floor(widths[index] * scale);
             CGFloat scaledH = floor(bounds.size.height * scale);
-            // Compute the unscaled center, then place the scaled frame
-            // so that its center matches the unscaled center.
             CGFloat unscaledCenterX = sideMargin + origins[index] + widths[index] / 2.0;
             CGFloat unscaledCenterY = bounds.size.height / 2.0;
             CGFloat scaledX = unscaledCenterX - scaledW / 2.0;
             CGFloat scaledY = unscaledCenterY - scaledH / 2.0;
-            CGRect baseFrame = CGRectMake(scaledX, scaledY,
-                                          scaledW, scaledH);
+            CGRect baseFrame = CGRectMake(scaledX, scaledY, scaledW, scaledH);
             gPaneBaseFrames[index] = baseFrame;
-            // Apply drag offset on top of the base frame.
             gPanes[index].frame = CGRectMake(baseFrame.origin.x + gPaneOffsets[index].x,
                                               baseFrame.origin.y + gPaneOffsets[index].y,
                                               baseFrame.size.width,
@@ -2222,26 +2147,23 @@ static void Layout(void)
                  NSStringFromCGRect(gPanes[index].frame), ratios[index],
                  scale, gPaneOffsets[index].x, gPaneOffsets[index].y);
 
-            // Position the drag handle at the top of the pane.
             if (gDragHandles[index]) {
                 gDragHandles[index].frame = CGRectMake(0, 0, scaledW, 28);
             }
-            // Position the close button at the top-right corner.
             if (gCloseButtons[index]) {
                 gCloseButtons[index].frame = CGRectMake(scaledW - 28, 0, 28, 28);
             }
         }
     }
-// Divider layout — removed (no longer created).
     
-    // Toggle button sits at the very top-left corner of the WHOLE display
-    // (window coordinates), not the left pane, so it never covers hosted
-    // content. In test mode it lives inside the rotated container too.
-    UIView *toggleHost = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
-    if (gToggleButton) {
+    // Toggle button removed from layout for car mode — no longer created.
+    // In test mode, position the close button at the top-left.
+    if (gToggleButton && gTestMode) {
+        UIView *toggleHost = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
         gToggleButton.frame = CGRectMake(8, 8, 48, 48);
         [toggleHost bringSubviewToFront:gToggleButton];
     }
+    
     // Lock hint label: centered at the top of the display.
     if (gLockHintLabel) {
         CGFloat hintW = 200;
@@ -2376,7 +2298,7 @@ static void CreateInterface(BOOL testMode)
     // Create panes with blue translucent background.
     // Reset drag offsets — a new interface starts with panes at their
     // Layout-assigned positions.
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < MAX_PANES; i++) {
         gPaneOffsets[i] = CGPointZero;
         gPaneBaseFrames[i] = CGRectZero;
     }
@@ -2464,29 +2386,28 @@ UIColor *paneColor = [UIColor clearColor];
 // visual separators are no longer needed.
 // (gDividers array kept for teardown compatibility but never populated.)
     
-    // Toggle button — always visible, lets user hide/show the panes.
-    // Custom type with identical colors for every state: the button must look
-    // the same (semi-transparent) whether idle or pressed. The old system-type
-    // button dimmed only while touched, which read as "transparent when
-    // pressed, opaque otherwise". (Custom buttons have no automatic press
-    // dimming; the highlighted-state title is set explicitly so a press can
-    // never fall back to a stale glyph either.)
-    if (!gControl) gControl = [DashSplitControl new];
-    UIButton *toggle = [UIButton buttonWithType:UIButtonTypeCustom];
-    UIColor *glyphColor = [UIColor colorWithWhite:1.0 alpha:0.6];
-    [toggle setTitle:@"✕" forState:UIControlStateNormal];
-    [toggle setTitle:@"✕" forState:UIControlStateHighlighted];
-    [toggle setTitleColor:glyphColor forState:UIControlStateNormal];
-    [toggle setTitleColor:glyphColor forState:UIControlStateHighlighted];
-    toggle.titleLabel.font = [UIFont systemFontOfSize:26 weight:UIFontWeightBold];
-    toggle.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
-    toggle.layer.cornerRadius = 24;
-    toggle.layer.zPosition = 9999;
-    [toggle addTarget:gControl action:@selector(toggleTapped) forControlEvents:UIControlEventTouchUpInside];
-
-    [addTarget addSubview:toggle];
+    // Toggle button removed — no longer created. The UI is controlled
+    // by lock screen auto-show/hide and per-pane × buttons + capsules.
+    // In test mode, create a dedicated close button so the user can exit.
+    if (testMode && !gControl) gControl = [DashSplitControl new];
+    if (testMode) {
+        UIButton *testClose = [UIButton buttonWithType:UIButtonTypeCustom];
+        UIColor *glyphColor = [UIColor colorWithWhite:1.0 alpha:0.6];
+        [testClose setTitle:@"✕" forState:UIControlStateNormal];
+        [testClose setTitle:@"✕" forState:UIControlStateHighlighted];
+        [testClose setTitleColor:glyphColor forState:UIControlStateNormal];
+        [testClose setTitleColor:glyphColor forState:UIControlStateHighlighted];
+        testClose.titleLabel.font = [UIFont systemFontOfSize:26 weight:UIFontWeightBold];
+        testClose.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
+        testClose.layer.cornerRadius = 24;
+        testClose.layer.zPosition = 9999;
+        [testClose addTarget:gControl action:@selector(toggleTapped) forControlEvents:UIControlEventTouchUpInside];
+        [addTarget addSubview:testClose];
+        gToggleButton = testClose;  // reuse the variable for test mode only
+    } else {
+        gToggleButton = nil;
+    }
     gWindow = window;
-    gToggleButton = toggle;
     
     // "请锁屏手机后显示" hint banner — centered at the top, shown when panes
     // are hidden (unlock auto-hide or manual hide). Semi-transparent background.
@@ -2539,7 +2460,7 @@ UIColor *paneColor = [UIColor clearColor];
         for (int index = 0; index < count; index++) {
             if (gPanes[index]) gPanes[index].hidden = YES;
         }
-        for (int i = 0; i < 2; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+        for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
         SetToggleGlyph(@"▶");
         CLog(@"ui: car mode — split view awaits a tap on the start button");
     }
@@ -2645,8 +2566,8 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < 3; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
-for (int i = 0; i < 2; i++) gDividers[i] = nil;
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
+for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
@@ -2666,7 +2587,7 @@ gLockHintLabel = nil;
                 gWindow = nil;
                 int count = PaneCount();
 for (int i = 0; i < count; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
-for (int i = 0; i < 2; i++) gDividers[i] = nil;
+for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
@@ -2682,8 +2603,8 @@ gLockHintLabel = nil;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < 3; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
-for (int i = 0; i < 2; i++) gDividers[i] = nil;
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
+for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
@@ -2698,8 +2619,8 @@ gLockHintLabel = nil;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < 3; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
-for (int i = 0; i < 2; i++) gDividers[i] = nil;
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gPaneOffsets[i] = CGPointZero; gPaneBaseFrames[i] = CGRectZero; }
+for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
@@ -2779,10 +2700,8 @@ static void DashSplitInit(void)
             NSString *resetKey = @"TestModeReset_0_1_14";
             if (!PrefBool(resetKey, NO)) {
                 CFPreferencesSetAppValue(CFSTR("TestOnMainScreen"), kCFBooleanFalse, CFSTR("zp.dashsplit"));
-                // Stored picks from experimentation also reset to the new
-                // Clock/Calendar defaults so the device shows them cleanly.
-                CFPreferencesSetAppValue(CFSTR("HostBundleID"), (__bridge CFTypeRef)kDefaultHost1, CFSTR("zp.dashsplit"));
-                CFPreferencesSetAppValue(CFSTR("HostBundleID2"), (__bridge CFTypeRef)kDefaultHost2, CFSTR("zp.dashsplit"));
+                // Reset to default selected apps.
+                CFPreferencesSetAppValue(CFSTR("SelectedApps"), (__bridge CFTypeRef)@"com.apple.mobiletimer,com.apple.mobilecal", CFSTR("zp.dashsplit"));
                 CFPreferencesSetAppValue((__bridge CFStringRef)resetKey, kCFBooleanTrue, CFSTR("zp.dashsplit"));
                 CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
                 CLog(@"init: one-time test-mode reset applied (default OFF)");
