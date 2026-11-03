@@ -2170,7 +2170,7 @@ static void Layout(void)
         CGFloat hintH = 32;
         CGFloat hintX = (bounds.size.width - hintW) / 2.0;
         gLockHintLabel.frame = CGRectMake(hintX, 10, hintW, hintH);
-        [toggleHost bringSubviewToFront:gLockHintLabel];
+        [host bringSubviewToFront:gLockHintLabel];
     }
 }
 
