@@ -33,7 +33,7 @@ public struct SliderCell: JinxCell {
         sliderCell.setProperty(key, forKey: "key")
         sliderCell.setProperty(defaultValue, forKey: "default")
         sliderCell.setProperty(range.lowerBound, forKey: "min")
-        sliderCell.setProperty(range.upperBound, forKey: "max")
+        sliderCell.setProperty(range.upperBound - 1, forKey: "max")
         sliderCell.setProperty(true, forKey: "showValue")
         sliderCell.setProperty(true, forKey: "isSegmented")
         sliderCell.setProperty(Metadata.package, forKey: "defaults")

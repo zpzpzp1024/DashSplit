@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>DashSplitPref</string>
 	<key>CFBundleIdentifier</key>
-	<string>lilliana.dashsplit</string>
+	<string>zp.dashsplit</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

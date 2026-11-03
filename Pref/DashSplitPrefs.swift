@@ -10,7 +10,7 @@
 import Preferences
 import UIKit
 
-private let prefsFile = "/var/mobile/Library/Preferences/lilliana.dashsplit.plist"
+private let prefsFile = "/var/mobile/Library/Preferences/zp.dashsplit.plist"
 private let keyEnabled = "Enabled"
 private let keyLeft = "HostBundleID"
 private let keyRight = "HostBundleID2"
@@ -25,14 +25,14 @@ private let keySplitRatio3 = "SplitRatio3"
 private let keyPaneScale = "PaneScale"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.45"
+private let tweakVersion = "0.1.46"
 
 // Uninstallable system apps: the defaults must exist on every device.
 private let defaultLeft = "com.apple.mobiletimer"   // 时钟
 private let defaultRight = "com.apple.mobilecal"     // 日历
 private let defaultThird = "com.apple.calculator"   // 计算器
 
-private let prefsDomain = "lilliana.dashsplit" as CFString
+private let prefsDomain = "zp.dashsplit" as CFString
 
 private func loadPrefs() -> [String: Any] {
     (NSDictionary(contentsOfFile: prefsFile) as? [String: Any]) ?? [:]
@@ -557,7 +557,7 @@ final class DashSplitPrefListController: PSListController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        Metadata.package = "lilliana.dashsplit"
+        Metadata.package = "zp.dashsplit"
         Metadata.tweakName = "车载分屏"
         Metadata.developer = "zpzpzp"
         title = "车载分屏"
@@ -599,7 +599,7 @@ final class DashSplitPrefListController: PSListController {
             // set it before any cell is built, not only in viewDidLoad
             // (specifiers can be requested before viewDidLoad runs; an
             // empty package here made the toggle write to a broken domain).
-            Metadata.package = "lilliana.dashsplit"
+            Metadata.package = "zp.dashsplit"
             Metadata.tweakName = "车载分屏"
             Metadata.developer = "zpzpzp"
 
@@ -611,7 +611,7 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "通用",
-                    footerText: "启用后,连接 CarPlay 时会在车机屏幕上左右分屏显示下面选择的 App。"
+                    footerText: "启用后,连接CarPlay时\n在车机屏幕上分屏显示选择的App。"
                 ),
                 ToggleCell(name: "启用分屏", key: keyEnabled, defaultValue: true)
             ], to: &specifiers, in: self)
@@ -631,7 +631,7 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "分屏应用与比例",
-                    footerText: "点进去选择 App;拖动滑块设置每屏占比(1-5);2分屏只需设第1屏,第2屏自动取剩余;3分屏可分别设3个屏;不设则用默认(2分屏1:2,3分屏1:1:1);1分屏无需设置。缩放比例为全局设置:以中心点为锚,四周等比缩小整个蓝色遮罩容器(宽和高同时缩放),1.0=原始大小,0.5=缩小一半。更改后重启 SpringBoard 生效;同一个 App 只投第一个出现的区域。"
+                    footerText: "选择App后拖动滑块设置占比(1-5)。\n2分屏只需设第1屏,第2屏自动取剩余。\n3分屏可分别设3个屏。\n不设则用默认(2分屏1:2,3分屏1:1:1)。\n同一App只投第一个出现的区域。"
                 )
             ], to: &specifiers, in: self)
             if let left = paneRow("第1屏应用", current: currentSelection(keyLeft, defaultLeft), detail: DashSplitLeftAppPicker.self) {
@@ -664,9 +664,9 @@ final class DashSplitPrefListController: PSListController {
                 }
             }
 
-            // 全局缩放比例 — 用一个带标题的分组做分隔线
+            // 全局缩放比例
             SpecifierFactory.add([
-                GroupCell(name: "全局缩放", footerText: "")
+                GroupCell(name: "全局缩放", footerText: "滑块值除以100即为实际缩放比例。\n例如:50=0.5倍,30=0.3倍。\n以中心点为锚,四周等比缩小。")
             ], to: &specifiers, in: self)
             // 缩放比例: 整数 10-100, 除以 100 得到实际缩放因子 0.1-1.0
             SpecifierFactory.add([
@@ -677,7 +677,7 @@ final class DashSplitPrefListController: PSListController {
             SpecifierFactory.add([
                 GroupCell(
                     name: "显示与测试",
-                    footerText: "等比缩放:保持宽高比,两侧可能留白;拉伸填满:强行拉伸填满,文字会变形;原生填充:通过 hook 屏幕尺寸让 App 自适应布局,部分 App 可能显示异常。测试模式不连 CarPlay 直接预览。更改后重启 SpringBoard 生效。"
+                    footerText: "等比缩放:保持宽高比,两侧可能留白。\n拉伸填满:强行拉伸,文字会变形。\n原生填充:hook屏幕尺寸让App自适应,部分App可能异常。\n测试模式不连CarPlay直接预览。"
                 )
             ], to: &specifiers, in: self)
             if let fitRow = linkRow("显示模式:\(fitModeName())", detail: DashSplitFitModePicker.self) {

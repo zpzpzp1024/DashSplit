@@ -11,7 +11,7 @@
     ./deploy.ps1 -Device 192.168.1.23 -Latest
 
 .EXAMPLE
-    ./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\lilliana.dashsplit_0.0.4_iphoneos-arm64.deb -Tail 120
+    ./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.46_iphoneos-arm64.deb -Tail 120
 
 .EXAMPLE
     ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow

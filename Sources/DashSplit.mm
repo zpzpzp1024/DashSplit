@@ -76,7 +76,7 @@
 //     -> SBAppViewController -> view
 //
 // Everything runs after SpringBoard is up, is wrapped in @try/@catch, and can be
-// disabled by creating /var/mobile/Library/Preferences/lilliana.dashsplit.off.
+// disabled by creating /var/mobile/Library/Preferences/zp.dashsplit.off.
 
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
@@ -100,12 +100,12 @@
 #endif
 
 #define COCKPIT_LOG     "/var/mobile/Library/Logs/DashSplit.log"
-#define COCKPIT_OFF     "/var/mobile/Library/Preferences/lilliana.dashsplit.off"
-#define COCKPIT_PREFS   "/var/mobile/Library/Preferences/lilliana.dashsplit.plist"
-#define COCKPIT_HOSTING "/var/mobile/Library/Preferences/lilliana.dashsplit.hosting"
-#define COCKPIT_CRASHED "/var/mobile/Library/Preferences/lilliana.dashsplit.crashed"
-#define COCKPIT_NEWSCENE "/var/mobile/Library/Preferences/lilliana.dashsplit.newscene"
-#define COCKPIT_CRASHCOUNT "/var/mobile/Library/Preferences/lilliana.dashsplit.crashcount"
+#define COCKPIT_OFF     "/var/mobile/Library/Preferences/zp.dashsplit.off"
+#define COCKPIT_PREFS   "/var/mobile/Library/Preferences/zp.dashsplit.plist"
+#define COCKPIT_HOSTING "/var/mobile/Library/Preferences/zp.dashsplit.hosting"
+#define COCKPIT_CRASHED "/var/mobile/Library/Preferences/zp.dashsplit.crashed"
+#define COCKPIT_NEWSCENE "/var/mobile/Library/Preferences/zp.dashsplit.newscene"
+#define COCKPIT_CRASHCOUNT "/var/mobile/Library/Preferences/zp.dashsplit.crashcount"
 
 static NSString *const kPrefsHostApp  = @"HostBundleID";
 static NSString *const kPrefsHostApp2 = @"HostBundleID2";
@@ -241,8 +241,8 @@ static id Pref(NSString *key)
 {
     // AppSynchronize refreshes this process's cached copy of the domain so
     // writes made by the Settings pane show up here promptly.
-    CFPreferencesAppSynchronize(CFSTR("lilliana.dashsplit"));
-    id value = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR("lilliana.dashsplit")));
+    CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
+    id value = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR("zp.dashsplit")));
     if (value) return value;
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:@COCKPIT_PREFS];
     return prefs[key];
@@ -266,8 +266,8 @@ static NSInteger PrefInteger(NSString *key, NSInteger fallback)
     return [value isKindOfClass:[NSNumber class]] ? [value integerValue] : fallback;
 }
 
-#define COCKPIT_TEST "/var/mobile/Library/Preferences/lilliana.dashsplit.test"
-#define COCKPIT_HOST "/var/mobile/Library/Preferences/lilliana.dashsplit.host"
+#define COCKPIT_TEST "/var/mobile/Library/Preferences/zp.dashsplit.test"
+#define COCKPIT_HOST "/var/mobile/Library/Preferences/zp.dashsplit.host"
 
 static BOOL FileExists(NSString *path)
 {
@@ -1807,8 +1807,8 @@ static void RestoreNow(void)
     if (gTestMode) {
         CFPreferencesSetAppValue(CFSTR("TestOnMainScreen"),
                                  kCFBooleanFalse,
-                                 CFSTR("lilliana.dashsplit"));
-        CFPreferencesAppSynchronize(CFSTR("lilliana.dashsplit"));
+                                 CFSTR("zp.dashsplit"));
+        CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
         TeardownAllHosts();
         gWindow.hidden = YES;
         gWindow = nil;
@@ -2525,7 +2525,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.45 loaded ---");
+        CLog(@"--- DashSplit 0.1.46 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
@@ -2551,13 +2551,13 @@ static void DashSplitInit(void)
             // After this single reset the Settings toggle is the only control.
             NSString *resetKey = @"TestModeReset_0_1_14";
             if (!PrefBool(resetKey, NO)) {
-                CFPreferencesSetAppValue(CFSTR("TestOnMainScreen"), kCFBooleanFalse, CFSTR("lilliana.dashsplit"));
+                CFPreferencesSetAppValue(CFSTR("TestOnMainScreen"), kCFBooleanFalse, CFSTR("zp.dashsplit"));
                 // Stored picks from experimentation also reset to the new
                 // Clock/Calendar defaults so the device shows them cleanly.
-                CFPreferencesSetAppValue(CFSTR("HostBundleID"), (__bridge CFTypeRef)kDefaultHost1, CFSTR("lilliana.dashsplit"));
-                CFPreferencesSetAppValue(CFSTR("HostBundleID2"), (__bridge CFTypeRef)kDefaultHost2, CFSTR("lilliana.dashsplit"));
-                CFPreferencesSetAppValue((__bridge CFStringRef)resetKey, kCFBooleanTrue, CFSTR("lilliana.dashsplit"));
-                CFPreferencesAppSynchronize(CFSTR("lilliana.dashsplit"));
+                CFPreferencesSetAppValue(CFSTR("HostBundleID"), (__bridge CFTypeRef)kDefaultHost1, CFSTR("zp.dashsplit"));
+                CFPreferencesSetAppValue(CFSTR("HostBundleID2"), (__bridge CFTypeRef)kDefaultHost2, CFSTR("zp.dashsplit"));
+                CFPreferencesSetAppValue((__bridge CFStringRef)resetKey, kCFBooleanTrue, CFSTR("zp.dashsplit"));
+                CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
                 CLog(@"init: one-time test-mode reset applied (default OFF)");
             }
             InstallSceneDiffHook();
