@@ -1316,7 +1316,7 @@ static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
     } else {
         initialSize = [UIScreen mainScreen].bounds.size;
     }
-    appView.backgroundColor = [UIColor clearColor];
+    appView.backgroundColor = [UIColor blackColor];
     appView.autoresizingMask = UIViewAutoresizingNone;
     [container addSubview:appView];
     appView.frame = CGRectMake(0, 0, initialSize.width, initialSize.height);
@@ -2129,9 +2129,12 @@ static UIWindow *MakeTestWindow(void)
 static UIView *MakePane(NSString *title, UIColor *bgColor)
 {
     UIView *pane = [[UIView alloc] initWithFrame:CGRectZero];
-    pane.backgroundColor = bgColor;
-    pane.userInteractionEnabled = YES;
-    pane.clipsToBounds = YES;
+pane.backgroundColor = bgColor;
+pane.userInteractionEnabled = YES;
+pane.clipsToBounds = YES;
+// Thin border so the pane boundary is visible with a clear background.
+pane.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.15].CGColor;
+pane.layer.borderWidth = 1.0;
     
     UILabel *label = [[UILabel alloc] initWithFrame:CGRectZero];
     label.text = title;
@@ -2200,7 +2203,12 @@ static void CreateInterface(BOOL testMode)
         gPaneBaseFrames[i] = CGRectZero;
     }
     if (!gDragHandler) gDragHandler = [DashSplitDragHandler new];
-    UIColor *paneColor = [UIColor colorWithRed:0.05 green:0.20 blue:0.55 alpha:0.55];
+    // Pane background is clear with a thin border: the old blue underlay
+// showed as a border around app content when it didn't fill the pane
+// (aspect-fit mode). Now the pane's visible area matches the app's
+// actual content — no blue gaps. A 1px border helps the user see
+// the pane boundary while dragging.
+UIColor *paneColor = [UIColor clearColor];
     NSArray *paneTitles = @[@"加载App……", @"加载App……", @"加载App……"];
     for (int index = 0; index < count; index++) {
         NSString *title = index < paneTitles.count ? paneTitles[index] : @"加载App……";
