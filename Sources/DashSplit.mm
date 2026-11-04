@@ -1744,6 +1744,17 @@ static NSString *AppNameForSlot(int paneIndex)
 
     CLog(@"restore: pane[%d] restored from capsule", paneIndex);
 
+    // 0.1.49: never go Live while the phone is unlocked (crash risk).
+    if (gLockStateKnown && !gPhoneLocked) {
+        CLog(@"restore: pane[%d] deferred — phone unlocked", paneIndex);
+        // Show the pane visually but defer hosting to next lock.
+        UIView *pane = gPanes[paneIndex];
+        if (pane) pane.hidden = NO;
+        gPaneClosed[paneIndex] = NO;
+        gPendingShow = 2;  // deferred restore
+        return;
+    }
+
     // Hide the capsule.
     sender.hidden = YES;
 
@@ -1791,10 +1802,96 @@ SetToggleGlyph(@"⟳");
     CLog(@"ui: overlay hidden (%@) — hosting kept alive", why);
 }
 
+// 0.1.49: Stand down all Live controllers without setting gUserClosed,
+// and hide panes + dividers but leave capsules alone. Called on phone
+// unlock — ShowAllCapsules runs right after to make the capsule row visible.
+static void StandDownForUnlock(NSString *why)
+{
+    int count = PaneCount();
+    gNativeFillActive = NO;
+    for (int index = 0; index < count; index++) {
+        if (gPanes[index]) gPanes[index].hidden = YES;
+    }
+    for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+    for (int index = 0; index < count; index++) {
+        SlotSetMode(index, 0);
+    }
+    CLog(@"ui: stood down for unlock (%@)", why);
+}
+
+// 0.1.49: Show all capsules in a horizontal row at the top of the car screen.
+// Called when the phone locks (or CarPlay connects while locked) — gives the
+// user a row of app-name capsules to tap, opening each app on demand.
+static void ShowAllCapsules(void)
+{
+    int count = PaneCount();
+    if (!gWindow || count == 0) return;
+
+    // Layout capsules in a horizontal row centered on the car screen.
+    UIView *host = gWindow;
+    CGFloat screenWidth = host.bounds.size.width;
+    CGFloat capsuleH = 36;
+    CGFloat capsuleSpacing = 12;
+    CGFloat capsulePadding = 24;
+
+    // First pass: set titles and measure widths.
+    CGFloat totalWidth = 0;
+    CGFloat widths[MAX_PANES];
+    for (int i = 0; i < count; i++) {
+        NSString *name = AppNameForSlot(i);
+        UIButton *cap = gCapsules[i];
+        if (!cap) { widths[i] = 0; continue; }
+        [cap setTitle:name forState:UIControlStateNormal];
+        [cap setTitle:name forState:UIControlStateHighlighted];
+        [cap sizeToFit];
+        CGFloat w = cap.frame.size.width + capsulePadding;
+        widths[i] = w;
+        totalWidth += w;
+        if (i < count - 1) totalWidth += capsuleSpacing;
+    }
+
+    // If all capsules fit in one row, center them. Otherwise wrap.
+    CGFloat startX = (screenWidth - totalWidth) / 2.0;
+    if (startX < 8) startX = 8;
+    CGFloat y = 8;  // top of screen
+
+    CGFloat x = startX;
+    for (int i = 0; i < count; i++) {
+        UIButton *cap = gCapsules[i];
+        if (!cap || widths[i] == 0) continue;
+        cap.frame = CGRectMake(x, y, widths[i], capsuleH);
+        cap.hidden = NO;
+        gPaneClosed[i] = YES;  // mark as closed so capsule is the active state
+        x += widths[i] + capsuleSpacing;
+
+        // Hide the corresponding pane.
+        if (gPanes[i]) gPanes[i].hidden = YES;
+        // Stand down the slot.
+        SlotSetMode(i, 0);
+    }
+
+    // Hide dividers.
+    for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+
+    // Hide lock hint label — capsules replace it.
+    if (gLockHintLabel) gLockHintLabel.hidden = YES;
+
+    CLog(@"ui: capsule row shown (%d apps)", count);
+}
+
 static void RestoreSlot(int index)
 {
     HostSlot *slot = gSlots[index];
-    if (!slot) return;
+    
+    // 0.1.49: If no slot was ever created for this pane (capsule was shown
+    // without prior hosting), host the app for the first time now.
+    if (!slot) {
+        NSString *bid = HostBundleIDForIndex(index);
+        if (bid.length == 0) return;
+        CLog(@"restore[%d]: no slot yet — first host of %@", index, bid);
+        gSlots[index] = HostApplication(bid, gPanes[index], index);
+        return;
+    }
     
     id scene = slot.handle ? Call0(slot.handle, @"sceneIfExists") : nil;
     BOOL active = BoolReturn(scene, @"isActive", NO);
@@ -1941,29 +2038,17 @@ gLockHintLabel = nil;
         return;
     }
 
+    // 0.1.49: gAwaitingStart is no longer set — auto-start replaces the
+    // old toggle-button gate. This branch is kept as a defensive fallback.
     if (gAwaitingStart) {
-        // 0.1.28: never enter Live while the phone is unlocked. The 19:10
-        // session started hosting 8s after unlock and died 2s later — with
-        // the phone in use the system pushes foreground=No straight into
-        // freshly-Live controllers. Remember the request; run it on the
-        // next lock event.
+        gAwaitingStart = NO;
+        CLog(@"ui: gAwaitingStart was unexpectedly YES — auto-starting now");
         if (gLockStateKnown && !gPhoneLocked) {
             gPendingShow = 1;
-            ShowPanes();
             CLog(@"ui: start requested but phone unlocked — deferred until the phone locks");
             return;
         }
-        // 0.1.23 start button. A tap inside the settle window shows the
-        // (still empty) panes for feedback but defers hosting — the CarPlay
-        // setup wave is still due and must not find a Live controller.
-        double age = gConnectAt > 0 ? CFAbsoluteTimeGetCurrent() - gConnectAt : CONNECT_SETTLE_SECONDS;
-        if (age < CONNECT_SETTLE_SECONDS) {
-            gPendingStart = YES;
-            ShowPanes();
-            CLog(@"ui: start tapped %.0fs after connect — panes shown, hosting deferred to the %.0fs mark", age, CONNECT_SETTLE_SECONDS);
-        } else {
-            StartNow();
-        }
+        StartNow();
         return;
     }
     if (!gUserClosed) {
@@ -2008,8 +2093,8 @@ static void HandleLockStateChanged(int token)
         // unlocked is now safe to run (never-Live-while-unlocked policy).
         if (gPendingShow == 1) {
             gPendingShow = 0;
-            CLog(@"lock: running deferred start");
-            StartNow();
+            CLog(@"lock: showing capsule row (deferred from connect)");
+            ShowAllCapsules();
         } else if (gPendingShow == 2) {
             gPendingShow = 0;
             CLog(@"lock: running deferred restore");
@@ -2020,19 +2105,13 @@ static void HandleLockStateChanged(int token)
     
     CLog(@"lock: phone unlocked");
     
-    // Nothing hosted yet on the car display — a deferred early tap must not
-    // turn into a Live host while the user is about to use the phone.
-    if (gAwaitingStart) {
-        if (gPendingStart) {
-            gPendingStart = NO;
-            int count = PaneCount();
-            for (int index = 0; index < count; index++) {
-                if (gPanes[index]) gPanes[index].hidden = YES;
-            }
-            for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
-            SetToggleGlyph(@"▶");
-            CLog(@"lock: pending start cancelled on unlock — tap ▶ again later");
-        }
+    // 0.1.49: if auto-start was deferred (gPendingShow == 1), the capsule
+    // row hasn't been shown yet. Show it now — capsules have no Live
+    // controllers so they're safe while unlocked.
+    if (gPendingShow == 1) {
+        gPendingShow = 0;
+        ShowAllCapsules();
+        CLog(@"lock: capsule row shown on unlock (was deferred from connect)");
         return;
     }
     
@@ -2041,7 +2120,10 @@ static void HandleLockStateChanged(int token)
     // unlock: it lives on the phone screen and is for debugging only.
     if (!gWindow || gTestMode || gUserClosed) return;
     
-    HidePanesAndStandDown(@"auto: phone unlocked");
+    // 0.1.49: stand down all Live controllers (crash safety), then show
+    // the capsule row so the car display stays useful while unlocked.
+    StandDownForUnlock(@"auto: phone unlocked");
+    ShowAllCapsules();
 }
 
 static void InstallLockStateObserver(void)
@@ -2453,16 +2535,22 @@ UIColor *paneColor = [UIColor clearColor];
         // of an already-running interface keep the old auto-host behavior.
         HostAllPanes(testMode);
     } else {
-        // 0.1.23: fresh CarPlay connect — show ONLY the start button. Panes
-        // and dividers stay hidden and nothing is hosted until the user
-        // taps (see toggleTapped / StartNow).
-        gAwaitingStart = YES;
-        for (int index = 0; index < count; index++) {
-            if (gPanes[index]) gPanes[index].hidden = YES;
+        // 0.1.49: toggle button removed — show capsule row on CarPlay connect.
+        // Safety: never go Live while the phone is unlocked (foreground=No
+        // crash risk). If locked, show capsules immediately. If unlocked,
+        // defer to the next lock event (HandleLockStateChanged will show them).
+        if (gLockStateKnown && gPhoneLocked) {
+            ShowAllCapsules();
+            CLog(@"ui: car mode — capsule row shown (phone locked)");
+        } else {
+            // Phone unlocked or lock state unknown — defer to next lock.
+            gPendingShow = 1;
+            for (int index = 0; index < count; index++) {
+                if (gPanes[index]) gPanes[index].hidden = YES;
+            }
+            for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+            CLog(@"ui: car mode — capsule row deferred until phone locks");
         }
-        for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
-        SetToggleGlyph(@"▶");
-        CLog(@"ui: car mode — split view awaits a tap on the start button");
     }
     gAutoStartOnCreate = NO;
 }
@@ -2673,7 +2761,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.48 loaded ---");
+        CLog(@"--- DashSplit 0.1.50 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
