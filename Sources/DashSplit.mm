@@ -2174,34 +2174,13 @@ static void Layout(void)
          gTestContainer ? NSStringFromCGRect(gTestContainer.bounds) : @"(nil)",
          count);
     
-    // Full width usage — all panes share the screen side by side.
-    // Leave a small side margin for aesthetics.
+    // 0.1.51: Fixed pane sizes — each pane gets a fixed width based on its
+    // ratio value (not divided by totalRatio). Multiple panes may overlap;
+    // the user drags them apart manually. Scale still applies per-app.
+    // Base unit: screen width / 5 (so ratio=5 fills the screen width).
     CGFloat sideMargin = floor(bounds.size.width / 26.0);
-    CGFloat usable = bounds.size.width - sideMargin * 2;
-
-    // Per-app ratios from prefs (1-5 each, default 1).
-    int ratios[MAX_PANES];
-    int totalRatio = 0;
-    for (int i = 0; i < count; i++) {
-        ratios[i] = AppRatioForIndex(i);
-        totalRatio += ratios[i];
-    }
-    if (totalRatio == 0) totalRatio = count;  // safety
-
-    // Normalise ratios to pixel widths.
-    CGFloat origins[MAX_PANES];
-    CGFloat widths[MAX_PANES];
-    CGFloat accumulated = 0;
-    for (int i = 0; i < count; i++) {
-        origins[i] = accumulated;
-        if (i < count - 1) {
-            CGFloat w = floor(usable * ratios[i] / totalRatio);
-            widths[i] = w;
-            accumulated += w;
-        } else {
-            widths[i] = usable - accumulated;
-        }
-    }
+    CGFloat baseUnit = floor(bounds.size.width / 5.0);
+    CGFloat paneHeight = bounds.size.height;  // full height
 
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
@@ -2211,14 +2190,18 @@ static void Layout(void)
                 continue;
             }
 
-            // Per-app scale.
+            int ratio = AppRatioForIndex(index);
             CGFloat scale = AppScaleForIndex(index);
-            CGFloat scaledW = floor(widths[index] * scale);
-            CGFloat scaledH = floor(bounds.size.height * scale);
-            CGFloat unscaledCenterX = sideMargin + origins[index] + widths[index] / 2.0;
-            CGFloat unscaledCenterY = bounds.size.height / 2.0;
-            CGFloat scaledX = unscaledCenterX - scaledW / 2.0;
-            CGFloat scaledY = unscaledCenterY - scaledH / 2.0;
+            // Fixed width: ratio * baseUnit, then apply scale.
+            CGFloat rawW = ratio * baseUnit;
+            CGFloat scaledW = floor(rawW * scale);
+            CGFloat scaledH = floor(paneHeight * scale);
+            // Stagger initial x position so panes don't perfectly overlap.
+            CGFloat staggerX = index * floor(baseUnit * 0.3);
+            CGFloat centerX = sideMargin + staggerX + scaledW / 2.0;
+            CGFloat centerY = paneHeight / 2.0;
+            CGFloat scaledX = centerX - scaledW / 2.0;
+            CGFloat scaledY = centerY - scaledH / 2.0;
             CGRect baseFrame = CGRectMake(scaledX, scaledY, scaledW, scaledH);
             gPaneBaseFrames[index] = baseFrame;
             gPanes[index].frame = CGRectMake(baseFrame.origin.x + gPaneOffsets[index].x,
@@ -2226,7 +2209,7 @@ static void Layout(void)
                                               baseFrame.size.width,
                                               baseFrame.size.height);
             CLog(@"layout: pane[%d] frame=%@ ratio=%d scale=%.2f offset={%.0f,%.0f}", index,
-                 NSStringFromCGRect(gPanes[index].frame), ratios[index],
+                 NSStringFromCGRect(gPanes[index].frame), ratio,
                  scale, gPaneOffsets[index].x, gPaneOffsets[index].y);
 
             if (gDragHandles[index]) {
@@ -2761,7 +2744,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.50 loaded ---");
+        CLog(@"--- DashSplit 0.1.51 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

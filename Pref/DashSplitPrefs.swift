@@ -14,7 +14,7 @@ private let keyFitMode = "FitMode"
 private let keyTestLandscape = "TestLandscape"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.50"
+private let tweakVersion = "0.1.51"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 
@@ -526,19 +526,23 @@ final class DashSplitPrefListController: PSListController {
                 SpecifierFactory.add([
                     GroupCell(
                         name: "应用占比与缩放",
-                        footerText: "每个App单独设置宽度占比和缩放比例。\n占比:1-5,数值越大窗口越宽。\n缩放:10-100,除以100得实际比例。"
+                        footerText: "每个App独立设置。\n占比:1-5,控制窗口固定宽度(1=1/5屏宽,5=满屏宽)。\n缩放:10-100,等比缩小窗口。\n多App会叠放,可拖拽调整位置。"
                     )
                 ], to: &specifiers, in: self)
 
                 for bid in selected {
                     let name = appName(for: bid, apps: apps)
+                    // Each app gets its own group header for clarity.
+                    SpecifierFactory.add([
+                        GroupCell(name: name)
+                    ], to: &specifiers, in: self)
                     // Ratio slider
                     SpecifierFactory.add([
-                        SliderCell(name: "\(name) 占比", key: ratioKey(bid), defaultValue: 1, range: 1..<6)
+                        SliderCell(name: "占比", key: ratioKey(bid), defaultValue: 1, range: 1..<6)
                     ], to: &specifiers, in: self)
                     // Scale slider
                     SpecifierFactory.add([
-                        SliderCell(name: "\(name) 缩放", key: scaleKey(bid), defaultValue: 100, range: 10..<101)
+                        SliderCell(name: "缩放", key: scaleKey(bid), defaultValue: 100, range: 10..<101)
                     ], to: &specifiers, in: self)
                 }
             }
