@@ -534,7 +534,7 @@ final class DashSplitPrefListController: PSListController {
                     let name = appName(for: bid, apps: apps)
                     // Each app gets its own group header for clarity.
                     SpecifierFactory.add([
-                        GroupCell(name: name)
+                        GroupCell(name: name, footerText: "")
                     ], to: &specifiers, in: self)
                     // Ratio slider
                     SpecifierFactory.add([
