@@ -2684,7 +2684,6 @@ UIColor *paneColor = [UIColor clearColor];
         closeBtn.layer.zPosition = 9998;  // above the drag handle
         // Vertically center the × glyph in the strip.
         closeBtn.titleLabel.lineBreakMode = NSLineBreakByClipping;
-        closeBtn.titleEdgeInsets = UIEdgeInsetsMake(0, 0, 0, 0);
         [closeBtn addTarget:gDragHandler action:@selector(closeButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
         [gPanes[index] addSubview:closeBtn];
         gCloseButtons[index] = closeBtn;
