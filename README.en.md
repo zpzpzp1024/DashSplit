@@ -5,24 +5,26 @@ A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts
 > 中文版：[README.md](README.md)
 
 - **Package**: `zp.dashsplit`
-- **Current version**: 0.1.52 ｜ iOS 15.0+ (arm64, Dopamine / palera1n style jailbreaks)
+- **Current version**: 0.1.53 ｜ iOS 15.0+ (arm64, Dopamine / palera1n style jailbreaks)
 - **Hosting reference**: [carplay-cast](https://github.com/EthanArbuckle/carplay-cast) (Apache-2.0)
 
 ---
 
-## Features (0.1.52)
+## Features (0.1.53)
 
 1. **Multi-app split screen**: pick up to 8 apps in Settings → 车载分屏 (saved as a comma-separated `SelectedApps` list). They all appear on the car display once CarPlay connects.
-2. **Left vertical strip** on every pane:
-   - **Top half**: vertical drag handle — drag to move this pane anywhere (independently of the others).
-   - **Bottom half**: **＋ / － zoom buttons**, each tap steps ±20% (clamped 0.2×–4×); **long-press ＋ or － to reset to 1.0×**.
-3. **Right vertical strip**: symmetric **× close button** that collapses the pane.
-4. **Capsule restore**: a closed pane becomes a draggable, labeled **capsule button** (app name); tap it to restore the pane.
-5. **Layout persistence**: drag offsets (normalized to screen width/height percentages), zoom factors and closed states are saved in real time to the `zp.dashsplit` preferences domain and **restored automatically after a CarPlay reconnect / SpringBoard respring**.
-6. **Lock-screen safety policy (0.1.28+)**: the tweak **never enters Live mode while the phone is unlocked** (prevents SpringBoard crashes). Panes are only displayed when the phone is locked — unlock auto-hides, lock auto-restores, and a "请锁屏手机后显示" (lock your phone) hint shows while hidden.
-7. **Phone test mode**: test the full hosting pipeline on the phone screen without a car.
-8. **Fit modes**: `FitMode` — 0 = aspect-fit (default), 1 = stretch fill.
-9. **Auto re-host**: crashed/backgrounded apps are re-hosted automatically, with a health-check fallback.
+2. **Right controls strip** on every pane, top to bottom:
+   - **Top 1/5 (drag zone)**: vertical drag handle — drag to move this pane anywhere (independently of the others).
+   - **＋**: zoom in 20% (clamped 0.2×–4×).
+   - **－**: zoom out 20%.
+   - **⟲ (reset)**: one tap restores the pre-zoom size (1.0×).
+   - **× (bottom)**: close the pane.
+3. **Capsule restore**: a closed pane becomes a draggable, labeled **capsule button** (app name); tap it to restore the pane.
+4. **Layout persistence**: drag offsets (normalized to screen width/height percentages), zoom factors and closed states are saved in real time to the `zp.dashsplit` preferences domain and **restored automatically after a CarPlay reconnect / SpringBoard respring**.
+5. **Lock-screen safety policy (0.1.28+)**: the tweak **never enters Live mode while the phone is unlocked** (prevents SpringBoard crashes). Panes are only displayed when the phone is locked — unlock auto-hides, lock auto-restores, and a "请锁屏手机后显示" (lock your phone) hint shows while hidden.
+6. **Phone test mode**: test the full hosting pipeline on the phone screen without a car.
+7. **Fit modes**: `FitMode` — 0 = aspect-fit (default), 1 = stretch fill.
+8. **Auto re-host**: crashed/backgrounded apps are re-hosted automatically, with a health-check fallback.
 
 ---
 
@@ -30,11 +32,11 @@ A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts
 
 | Action | Where | Behavior |
 | --- | --- | --- |
-| Drag | **left strip, top half** | move this pane |
-| Zoom in | **left strip, bottom ＋** | pane grows 20% (overlaps others; they stay put) |
-| Zoom out | **left strip, bottom －** | pane shrinks 20% |
-| Reset size | **long-press ＋ or －** | back to 1.0× |
-| Close | **right strip ×** | collapse pane into a capsule |
+| Drag | **right strip, top 1/5 (drag zone)** | move this pane |
+| Zoom in | **right strip ＋** | pane grows 20% (overlaps others; they stay put) |
+| Zoom out | **right strip －** | pane shrinks 20% |
+| Reset size | **right strip ⟲** | back to pre-zoom size (1.0×) |
+| Close | **right strip × (bottom)** | collapse pane into a capsule |
 | Restore | **tap the capsule** | show the pane again |
 | Move capsule | drag it | reposition |
 
@@ -63,7 +65,7 @@ Install OpenSSH on the device, then use `deploy.ps1` from this repo:
 
 ```powershell
 ./deploy.ps1 -Device 192.168.1.23 -Latest          # install newest release
-./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.52_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.53_iphoneos-arm64.deb
 ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow  # follow the log live
 ```
 
@@ -135,7 +137,7 @@ After a respring, the split-screen panes load straight onto the phone screen —
 
 `/var/mobile/Library/Logs/DashSplit.log` (256 KB rotation), including:
 
-- `--- DashSplit 0.1.52 loaded ---` — tweak loaded
+- `--- DashSplit 0.1.53 loaded ---` — tweak loaded
 - `probe: screens` — head-unit display detected (`car=1` / `carplay=1`)
 - `host: ...` — every step of app hosting
 - `ui: pane[0] restored off={...} zoom=... closed=...` — layout restore
@@ -162,6 +164,7 @@ Pushing to the `main` branch triggers `.github/workflows/build.yml`, which:
 
 ## Version history (summary)
 
+- **0.1.53**: controls consolidated — drag, zoom in (＋), zoom out (－), reset (⟲, restores the pre-zoom size) and close (×) now all live in one **right vertical strip** (top 1/5 drag zone, then ＋/－/⟲/×); fixed zoom buttons being unresponsive (the whole strip is now lifted above the hosted app view); fixed black screen after tap-restoring a capsule in phone test mode (test mode skips the lock-screen gate and restores immediately).
 - **0.1.52**: UI redesign — the top horizontal drag handle became a **left vertical strip** (top: drag; bottom: ＋/− zoom, long-press reset to 1.0×); the close button became a **right vertical × strip**; independent per-pane zoom (overlaps neighbours); layout (offset/zoom/closed state) **persisted in real time and restored on reconnect**.
 - **0.1.49**: on unlock, only hide panes and keep the capsule row — don't mark them closed.
 - **0.1.28**: lock-screen safety policy — never enter Live while unlocked (fixes the stable-connection crash).

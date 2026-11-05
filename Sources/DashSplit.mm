@@ -631,6 +631,9 @@ static BOOL gAutoStartOnCreate = NO; // rebuild path: interface was live, host a
 static BOOL gPhoneLocked = NO;    // last observed phone lock state
 static BOOL gLockStateKnown = NO; // initial-state query succeeded
 static int gPendingShow = 0;      // 0 none; 1 start / 2 restore requested while unlocked
+// 0.1.53: capsule restore deferred while the phone is unlocked (car mode).
+// -1 = none; otherwise the pane index to restore on the next lock event.
+static int gPendingRestoreIndex = -1;
 
 static BOOL SetCurrentMode(id viewController, NSInteger mode)
 {
@@ -1258,25 +1261,22 @@ static UIView *gDragHandles[MAX_PANES];
 static UIButton *gCloseButtons[MAX_PANES];
 static UIButton *gZoomInButtons[MAX_PANES];
 static UIButton *gZoomOutButtons[MAX_PANES];
+static UIButton *gResetButtons[MAX_PANES];
+static UIView *gControlStrips[MAX_PANES];
 // Capsule buttons shown when a pane is closed via ×. Tapping restores the pane.
 static UIButton *gCapsules[MAX_PANES];
 
-// Re-bring the drag handle to the front of the pane's subview stack.
-// The hosted appView is added via addSubview after the handle, which
-// puts it on top. We need the handle to remain on top for touches to
-// reach its pan gesture recognizer instead of being intercepted by
-// the appView's internal view hierarchy.
+// Re-bring the right controls strip to the front of the pane's subview
+// stack. The hosted appView is added via addSubview after the strip, which
+// puts it on top. We need the strip (drag zone + ＋/−/reset/× buttons) to
+// remain on top so touches reach the controls instead of the appView.
 static void BringHandleToFront(UIView *container)
 {
     if (!container) return;
     for (int i = 0; i < MAX_PANES; i++) {
-        if (gDragHandles[i] && gDragHandles[i].superview == container) {
-            [container bringSubviewToFront:gDragHandles[i]];
-            gDragHandles[i].layer.zPosition = 9997;
-            if (gCloseButtons[i] && gCloseButtons[i].superview == container) {
-                [container bringSubviewToFront:gCloseButtons[i]];
-                gCloseButtons[i].layer.zPosition = 9998;
-            }
+        if (gControlStrips[i] && gControlStrips[i].superview == container) {
+            [container bringSubviewToFront:gControlStrips[i]];
+            gControlStrips[i].layer.zPosition = 9997;
             return;
         }
     }
@@ -1586,7 +1586,7 @@ static BOOL gPaneClosed[MAX_PANES];
 - (void)capsuleTapped:(UIButton *)sender;
 - (void)zoomInTapped:(UIButton *)sender;
 - (void)zoomOutTapped:(UIButton *)sender;
-- (void)zoomResetLongPress:(UILongPressGestureRecognizer *)gesture;
+- (void)resetZoomTapped:(UIButton *)sender;
 @end
 
 // Forward declaration — TeardownSlot is defined later in the file.
@@ -1751,20 +1751,16 @@ static void LayoutCapsuleForPane(int index)
     [self applyZoom:-0.2 toPane:paneIndex];
 }
 
-// Long-press on ＋ or － resets the pane to its default size.
-- (void)zoomResetLongPress:(UILongPressGestureRecognizer *)gesture
+// Reset button (⟲): restore this pane to its default (pre-zoom) size.
+- (void)resetZoomTapped:(UIButton *)sender
 {
-    if (gesture.state != UIGestureRecognizerStateBegan) return;
-    UIView *strip = gesture.view;
     int paneIndex = -1;
     for (int i = 0; i < MAX_PANES; i++) {
-        if (gDragHandles[i] == strip || gZoomInButtons[i] == strip || gZoomOutButtons[i] == strip) {
-            paneIndex = i;
-            break;
-        }
+        if (gResetButtons[i] == sender) { paneIndex = i; break; }
     }
     if (paneIndex < 0) return;
-    CLog(@"zoom: pane[%d] long-press reset to 1.0", paneIndex);
+    if (gPaneZoom[paneIndex] == 1.0f) return;
+    CLog(@"zoom: pane[%d] reset to 1.0", paneIndex);
     [self applyZoom:(1.0f - gPaneZoom[paneIndex]) toPane:paneIndex];
 }
 
@@ -1849,14 +1845,15 @@ static NSString *AppNameForSlot(int paneIndex)
 
     CLog(@"restore: pane[%d] restored from capsule", paneIndex);
 
-    // 0.1.49: never go Live while the phone is unlocked (crash risk).
-    if (gLockStateKnown && !gPhoneLocked) {
+    // 0.1.49: never go Live while the phone is unlocked on the CAR display.
+    // 0.1.53: phone test mode always restores immediately — it hosts on the
+    // phone screen and initial hosting already runs Live while unlocked.
+    if (!gTestMode && gLockStateKnown && !gPhoneLocked) {
         CLog(@"restore: pane[%d] deferred — phone unlocked", paneIndex);
-        // Show the pane visually but defer hosting to next lock.
-        UIView *pane = gPanes[paneIndex];
-        if (pane) pane.hidden = NO;
-        gPaneClosed[paneIndex] = NO;
-        gPendingShow = 2;  // deferred restore
+        // Keep the pane hidden (avoid a black box) and the capsule visible;
+        // the restore runs on the next lock (see gPendingRestoreIndex).
+        gPendingRestoreIndex = paneIndex;
+        gPaneClosed[paneIndex] = YES;
         SavePaneLayoutState();
         return;
     }
@@ -2286,6 +2283,20 @@ static void HandleLockStateChanged(int token)
         CLog(@"lock: phone locked — leaving the split view as-is");
         // 0.1.28: a start/restore the user requested while the phone was
         // unlocked is now safe to run (never-Live-while-unlocked policy).
+        // 0.1.53: a capsule restore deferred while unlocked (gPendingRestoreIndex).
+        if (gPendingRestoreIndex >= 0) {
+            int idx = gPendingRestoreIndex;
+            gPendingRestoreIndex = -1;
+            if (gWindow && idx < PaneCount() && gPanes[idx]) {
+                CLog(@"lock: running deferred capsule restore for pane[%d]", idx);
+                if (gCapsules[idx]) gCapsules[idx].hidden = YES;
+                gPanes[idx].hidden = NO;
+                gPaneClosed[idx] = NO;
+                SavePaneLayoutState();
+                RestoreSlot(idx);
+                return;
+            }
+        }
         if (gPendingShow == 1) {
             gPendingShow = 0;
             CLog(@"lock: restoring saved layout (deferred from connect)");
@@ -2397,24 +2408,27 @@ static void Layout(void)
             CGRect baseFrame = CGRectMake(scaledX, scaledY, scaledW, scaledH);
             gPaneBaseFrames[index] = baseFrame;
 
-            // Left strip: vertical drag handle occupying the full pane height.
-            // Top half is the drag area, bottom half holds the ＋/− zoom buttons.
-            CGFloat stripW = 22;
-            if (gDragHandles[index]) {
-                gDragHandles[index].frame = CGRectMake(0, 0, stripW, scaledH);
+            // Right controls strip, pinned to the pane's right edge.
+            // Top → bottom: drag zone, ＋, －, reset(⟲), ×.
+            CGFloat stripW = 26;
+            CGFloat zoneH = scaledH / 5.0;
+            if (gControlStrips[index]) {
+                gControlStrips[index].frame = CGRectMake(scaledW - stripW, 0, stripW, scaledH);
             }
-            // Zoom buttons: stacked in the lower half of the left strip.
-            CGFloat btnH = scaledH / 2.0 / 2.0;
-            CGFloat btnY = scaledH / 2.0;
+            if (gDragHandles[index]) {
+                gDragHandles[index].frame = CGRectMake(0, 0, stripW, zoneH);
+            }
             if (gZoomInButtons[index]) {
-                gZoomInButtons[index].frame = CGRectMake(0, btnY, stripW, btnH);
+                gZoomInButtons[index].frame = CGRectMake(0, zoneH, stripW, zoneH);
             }
             if (gZoomOutButtons[index]) {
-                gZoomOutButtons[index].frame = CGRectMake(0, btnY + btnH, stripW, btnH);
+                gZoomOutButtons[index].frame = CGRectMake(0, zoneH * 2, stripW, zoneH);
             }
-            // Right strip: vertical close button, symmetric with the left one.
+            if (gResetButtons[index]) {
+                gResetButtons[index].frame = CGRectMake(0, zoneH * 3, stripW, zoneH);
+            }
             if (gCloseButtons[index]) {
-                gCloseButtons[index].frame = CGRectMake(scaledW - stripW, 0, stripW, scaledH);
+                gCloseButtons[index].frame = CGRectMake(0, zoneH * 4, stripW, zoneH);
             }
 
             // Skip closed panes — they're hidden and don't need layout.
@@ -2594,99 +2608,101 @@ UIColor *paneColor = [UIColor clearColor];
         gPanes[index] = MakePane(title, paneColor);
         [addTarget addSubview:gPanes[index]];
 
-        // Drag handle: a semi-transparent vertical strip pinned to the LEFT edge
-        // of the pane. Touches on the strip's top half move the pane;
-        // touches everywhere else on the pane pass through to the hosted
-        // app. The bottom half holds the ＋/− zoom buttons.
-        UIView *handle = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 22, 0)];
-        handle.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.35];
-        handle.layer.cornerRadius = 4;
-        handle.userInteractionEnabled = YES;
-        handle.layer.zPosition = 9997;  // above the hosted appView
-        // Visual indicator: three short horizontal lines stacked vertically,
-        // centered in the top drag half of the strip.
+        // Controls strip: pinned to the pane's RIGHT edge.
+        // Top → bottom: drag zone, ＋, －, reset(⟲), ×.
+        // One container keeps the whole column above the hosted appView
+        // (BringHandleToFront lifts it as a unit) and gives every pane
+        // symmetric, easy-to-reach controls without stealing vertical space.
+        UIView *strip = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 26, 0)];
+        strip.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.35];
+        strip.layer.cornerRadius = 4;
+        strip.userInteractionEnabled = YES;
+        strip.layer.zPosition = 9997;  // above the hosted appView
+
+        // Drag zone: top 1/5 of the strip. Its pan gesture moves the pane;
+        // the buttons below it are siblings, so taps on them never trigger
+        // the drag.
+        UIView *dragZone = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 26, 0)];
+        dragZone.userInteractionEnabled = YES;
         for (int dot = 0; dot < 3; dot++) {
-            UIView *line = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 12, 3)];
+            UIView *line = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 14, 3)];
             line.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.5];
             line.layer.cornerRadius = 1.5;
-            line.center = CGPointMake(handle.bounds.size.width / 2.0,
-                                      14 + (dot - 1) * 6);
+            line.center = CGPointMake(13, 16 + (dot - 1) * 7);
             line.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
-            [handle addSubview:line];
+            [dragZone addSubview:line];
         }
-        // Long-press on the drag strip resets the pane zoom to 1.0.
-        UILongPressGestureRecognizer *handleLongPress = [[UILongPressGestureRecognizer alloc]
-                                                          initWithTarget:gDragHandler
-                                                                  action:@selector(zoomResetLongPress:)];
-        handleLongPress.minimumPressDuration = 0.6;
-        [handle addGestureRecognizer:handleLongPress];
-        // Pan gesture on the whole strip moves the pane.
+        [strip addSubview:dragZone];
+        gDragHandles[index] = dragZone;
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
                                                                                 action:@selector(handleDrag:)];
-        [handle addGestureRecognizer:pan];
-        [gPanes[index] addSubview:handle];
-        gDragHandles[index] = handle;
+        [dragZone addGestureRecognizer:pan];
 
-        // Zoom in button (＋) — lower-left area of the left strip.
+        // Zoom in (＋).
         UIButton *zoomIn = [UIButton buttonWithType:UIButtonTypeCustom];
         [zoomIn setTitle:@"＋" forState:UIControlStateNormal];
         [zoomIn setTitle:@"＋" forState:UIControlStateHighlighted];
-        zoomIn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        zoomIn.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
         [zoomIn setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.8] forState:UIControlStateNormal];
         [zoomIn setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
-        zoomIn.frame = CGRectMake(0, 0, 22, 0);
+        zoomIn.frame = CGRectMake(0, 0, 26, 0);
         zoomIn.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.3];
         zoomIn.layer.zPosition = 9997;
         [zoomIn addTarget:gDragHandler action:@selector(zoomInTapped:) forControlEvents:UIControlEventTouchUpInside];
-        UILongPressGestureRecognizer *zoomInLongPress = [[UILongPressGestureRecognizer alloc]
-                                                          initWithTarget:gDragHandler
-                                                                  action:@selector(zoomResetLongPress:)];
-        zoomInLongPress.minimumPressDuration = 0.6;
-        [zoomIn addGestureRecognizer:zoomInLongPress];
-        [gPanes[index] addSubview:zoomIn];
+        [strip addSubview:zoomIn];
         gZoomInButtons[index] = zoomIn;
 
-        // Zoom out button (－) below ＋.
+        // Zoom out (－).
         UIButton *zoomOut = [UIButton buttonWithType:UIButtonTypeCustom];
         [zoomOut setTitle:@"－" forState:UIControlStateNormal];
         [zoomOut setTitle:@"－" forState:UIControlStateHighlighted];
-        zoomOut.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        zoomOut.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
         [zoomOut setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.8] forState:UIControlStateNormal];
         [zoomOut setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
-        zoomOut.frame = CGRectMake(0, 0, 22, 0);
+        zoomOut.frame = CGRectMake(0, 0, 26, 0);
         zoomOut.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.3];
         zoomOut.layer.zPosition = 9997;
         [zoomOut addTarget:gDragHandler action:@selector(zoomOutTapped:) forControlEvents:UIControlEventTouchUpInside];
-        UILongPressGestureRecognizer *zoomOutLongPress = [[UILongPressGestureRecognizer alloc]
-                                                           initWithTarget:gDragHandler
-                                                                   action:@selector(zoomResetLongPress:)];
-        zoomOutLongPress.minimumPressDuration = 0.6;
-        [zoomOut addGestureRecognizer:zoomOutLongPress];
-        [gPanes[index] addSubview:zoomOut];
+        [strip addSubview:zoomOut];
         gZoomOutButtons[index] = zoomOut;
+
+        // Reset (⟲): restore the pane to its default (pre-zoom) size.
+        UIButton *resetBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        [resetBtn setTitle:@"⟲" forState:UIControlStateNormal];
+        [resetBtn setTitle:@"⟲" forState:UIControlStateHighlighted];
+        resetBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        [resetBtn setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.8] forState:UIControlStateNormal];
+        [resetBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
+        resetBtn.frame = CGRectMake(0, 0, 26, 0);
+        resetBtn.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.3];
+        resetBtn.layer.zPosition = 9997;
+        [resetBtn addTarget:gDragHandler action:@selector(resetZoomTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [strip addSubview:resetBtn];
+        gResetButtons[index] = resetBtn;
 
         // Reset closed state — new interface starts with all panes visible.
         gPaneClosed[index] = NO;
         // Reset zoom — LoadPaneLayoutState below restores the saved value.
         gPaneZoom[index] = 1.0f;
 
-        // Close button (×) as a vertical strip pinned to the RIGHT edge of
-        // the pane, symmetric with the left drag strip.
+        // Close (×) at the bottom of the strip.
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
         [closeBtn setTitle:@"×" forState:UIControlStateNormal];
         [closeBtn setTitle:@"×" forState:UIControlStateHighlighted];
-        closeBtn.titleLabel.font = [UIFont systemFontOfSize:20 weight:UIFontWeightBold];
+        closeBtn.titleLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightBold];
         [closeBtn setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.7] forState:UIControlStateNormal];
         [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
-        closeBtn.frame = CGRectMake(0, 0, 22, 0);
+        closeBtn.frame = CGRectMake(0, 0, 26, 0);
         closeBtn.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
         closeBtn.layer.cornerRadius = 4;
-        closeBtn.layer.zPosition = 9998;  // above the drag handle
-        // Vertically center the × glyph in the strip.
+        closeBtn.layer.zPosition = 9998;
         closeBtn.titleLabel.lineBreakMode = NSLineBreakByClipping;
         [closeBtn addTarget:gDragHandler action:@selector(closeButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [gPanes[index] addSubview:closeBtn];
+        [strip addSubview:closeBtn];
         gCloseButtons[index] = closeBtn;
+
+        [gPanes[index] addSubview:strip];
+        gControlStrips[index] = strip;
 
         // Capsule button: shown when the pane is closed via ×. Displays
         // the app name, is draggable, and tapping it restores the pane.
@@ -3014,7 +3030,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.52 loaded ---");
+        CLog(@"--- DashSplit 0.1.53 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
