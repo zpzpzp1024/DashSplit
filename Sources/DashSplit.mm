@@ -1274,8 +1274,13 @@ static UIView *gControlStrip;
 static UILabel *gControlLabel;
 static UISlider *gZoomSlider;
 static UIButton *gResetButton;
-static UIButton *gCloseButton;
+static UIButton *gCloseButton;  // vestigial — 0.1.57+ close lives on each pane
 static int gCurrentPane = -1;   // -1 = no pane selected
+
+// 0.1.57: per-pane controls — drag handle on top, close × below, pinned to
+// each pane's right edge (laid out in Layout so they move & scale with it).
+static UIView *gDragHandles[MAX_PANES];
+static UIButton *gCloseButtons[MAX_PANES];
 
 // Drag session state for long-press pane dragging.
 static CGPoint gDragStartCenter = CGPointZero;
@@ -1589,6 +1594,7 @@ static BOOL gPaneClosed[MAX_PANES];
 
 @interface DashSplitDragHandler : NSObject
 - (void)handlePanePress:(UILongPressGestureRecognizer *)gesture;
+- (void)handleDrag:(UIPanGestureRecognizer *)gesture;
 - (void)handleCapsuleDrag:(UIPanGestureRecognizer *)gesture;
 - (void)capsuleTapped:(UIButton *)sender;
 - (void)zoomSliderChanged:(UISlider *)slider;
@@ -1653,6 +1659,51 @@ static void LayoutCapsuleForPane(int index)
 // long press also selects the pane as the "current pane" for the right-edge
 // controls strip. Single taps are never intercepted — they fall through to
 // the hosted app.
+// Drag handle pinned to each pane's right edge (0.1.57): panning anywhere on
+// the handle moves that pane — an explicit alternative to long-press drag.
+- (void)handleDrag:(UIPanGestureRecognizer *)gesture
+{
+    UIView *handle = gesture.view;
+    if (!handle) return;
+    int paneIndex = (int)handle.tag;
+    if (paneIndex < 0 || paneIndex >= MAX_PANES) return;
+    if (gPaneClosed[paneIndex]) return;
+    UIView *thePane = gPanes[paneIndex];
+    UIView *parent = thePane ? thePane.superview : nil;
+    if (!thePane || !parent) return;
+
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        SelectPane(paneIndex);
+        gDragStartCenter = gPaneCenters[paneIndex];
+        gDragStartPoint = [gesture locationInView:parent];
+    } else if (gesture.state == UIGestureRecognizerStateChanged) {
+        CGPoint now = [gesture locationInView:parent];
+        gPaneCenters[paneIndex].x = gDragStartCenter.x + (now.x - gDragStartPoint.x);
+        gPaneCenters[paneIndex].y = gDragStartCenter.y + (now.y - gDragStartPoint.y);
+
+        // Keep at least 40pt of the pane visible on each axis.
+        CGFloat w = thePane.bounds.size.width;
+        CGFloat h = thePane.bounds.size.height;
+        CGFloat minVisible = 40;
+        CGFloat minX = minVisible - w / 2.0;
+        CGFloat maxX = parent.bounds.size.width - minVisible + w / 2.0;
+        CGFloat minY = minVisible - h / 2.0;
+        CGFloat maxY = parent.bounds.size.height - minVisible + h / 2.0;
+        if (gPaneCenters[paneIndex].x < minX) gPaneCenters[paneIndex].x = minX;
+        if (gPaneCenters[paneIndex].x > maxX) gPaneCenters[paneIndex].x = maxX;
+        if (gPaneCenters[paneIndex].y < minY) gPaneCenters[paneIndex].y = minY;
+        if (gPaneCenters[paneIndex].y > maxY) gPaneCenters[paneIndex].y = maxY;
+
+        thePane.center = gPaneCenters[paneIndex];
+        gPaneBaseFrames[paneIndex] = thePane.frame;
+    } else if (gesture.state == UIGestureRecognizerStateEnded ||
+               gesture.state == UIGestureRecognizerStateCancelled) {
+        SavePaneLayoutState();
+        CLog(@"drag: pane[%d] handle-drag ended center={%.0f,%.0f}", paneIndex,
+             gPaneCenters[paneIndex].x, gPaneCenters[paneIndex].y);
+    }
+}
+
 - (void)handlePanePress:(UILongPressGestureRecognizer *)gesture
 {
     UIView *pane = gesture.view;
@@ -1772,9 +1823,9 @@ static NSString *AppNameForSlot(int paneIndex)
 
 - (void)closeButtonTapped:(UIButton *)sender
 {
-    // 0.1.55: the single × in the right-edge strip closes the current pane.
-    if (gCurrentPane < 0) return;
-    int paneIndex = gCurrentPane;
+    // 0.1.57: every pane has its own ×; close the pane this button belongs to.
+    int paneIndex = (int)sender.tag;
+    if (paneIndex < 0 || paneIndex >= MAX_PANES) return;
 
     CLog(@"close: pane[%d] minimized by user", paneIndex);
 
@@ -1860,6 +1911,25 @@ static void AttachPaneDragGesture(UIView *target)
     [target addGestureRecognizer:press];
 }
 
+// 0.1.57: the zoom slider's max is dynamic so dragging it fully ALWAYS makes
+// the pane fill (and overflow) the screen — 4× of a tiny default ratio is
+// nowhere near "maximum". At least 4×, capped at 12× as a sanity limit.
+static CGFloat PaneMaxZoom(int index)
+{
+    UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
+    CGRect bounds = host ? host.bounds : CGRectZero;
+    if (bounds.size.width <= 0) bounds.size.width = 1;
+    if (bounds.size.height <= 0) bounds.size.height = 1;
+    CGFloat baseUnit = floor(bounds.size.width / 5.0);
+    CGFloat rawW = MAX(AppRatioForIndex(index) * baseUnit * AppScaleForIndex(index), 60);
+    CGFloat rawH = MAX(bounds.size.height * AppScaleForIndex(index), 60);
+    CGFloat need = MAX(bounds.size.width / rawW, bounds.size.height / rawH);
+    CGFloat maxZ = ceil(need * 1.2);  // 20% overflow so "max" always overshoots
+    if (maxZ < 4.0) maxZ = 4.0;
+    if (maxZ > 12.0) maxZ = 12.0;
+    return maxZ;
+}
+
 // 0.1.55: mark a pane as the "current" one for the single right-edge strip.
 // Highlights its border and syncs the strip's label/slider/button state.
 static void SelectPane(int index)
@@ -1884,18 +1954,26 @@ static void SelectPane(int index)
         }
     }
     BOOL usable = (index >= 0 && index < MAX_PANES && gPanes[index] && !gPaneClosed[index]);
-    if (gZoomSlider) { gZoomSlider.enabled = usable; if (usable) gZoomSlider.value = gPaneZoom[index]; }
+    if (gZoomSlider) {
+        gZoomSlider.enabled = usable;
+        if (usable) {
+            gZoomSlider.maximumValue = PaneMaxZoom(index);
+            gZoomSlider.value = gPaneZoom[index];
+        }
+    }
     if (gResetButton) gResetButton.enabled = usable;
     if (gCloseButton) gCloseButton.enabled = usable;
 }
 
-// Zoom a pane to an absolute factor (0.2×–4×) around its fixed center
-// anchor, then re-fit and persist.
+// Zoom a pane to an absolute factor around its fixed center anchor, then
+// re-fit and persist. The max is dynamic (see PaneMaxZoom) so pulling the
+// slider all the way genuinely fills/overshoots the screen.
 static void SetPaneZoom(int index, CGFloat zoom)
 {
     if (index < 0 || index >= MAX_PANES) return;
     if (zoom < 0.2f) zoom = 0.2f;
-    if (zoom > 4.0f) zoom = 4.0f;
+    CGFloat maxZ = PaneMaxZoom(index);
+    if (zoom > maxZ) zoom = maxZ;
     if (fabs(zoom - gPaneZoom[index]) < 0.001f) return;
     CLog(@"zoom: pane[%d] -> %.2f", index, zoom);
     gPaneZoom[index] = zoom;
@@ -1928,9 +2006,10 @@ static void LayoutControls(CGRect bounds)
         // Rotated frame: width is the visual height. Center it under the label.
         gZoomSlider.center = CGPointMake(stripW / 2.0, 60 + 170 / 2.0);
     }
+    // 0.1.57: the × moved onto each pane; the right-edge strip keeps
+    // label + zoom slider + reset only.
     CGFloat y = 60 + 170 + 6;
     if (gResetButton) { gResetButton.frame = CGRectMake(8, y, stripW - 16, 48); y += 54; }
-    if (gCloseButton) { gCloseButton.frame = CGRectMake(8, y, stripW - 16, 48); }
 }
 
 #pragma mark - Pane layout persistence
@@ -2074,7 +2153,8 @@ static void LoadPaneLayoutState(void)
         if (hasCenter) gPaneCenters[index] = CGPointMake(cx, cy);
         gPaneZoom[index] = zoom;
         if (gPaneZoom[index] < 0.2f) gPaneZoom[index] = 0.2f;
-        if (gPaneZoom[index] > 4.0f) gPaneZoom[index] = 4.0f;
+        CGFloat paneMaxZ = PaneMaxZoom(index);
+        if (gPaneZoom[index] > paneMaxZ) gPaneZoom[index] = paneMaxZ;
         gPaneClosed[index] = closed;
 
         if (hasCenter || zoom != 1.0f || closed) {
@@ -2341,7 +2421,7 @@ static void RestoreNow(void)
         TeardownAllHosts();
         gWindow.hidden = YES;
         gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -2555,6 +2635,25 @@ static void Layout(void)
         }
     }
     
+    // 0.1.57: per-pane drag handle + close ×, stacked vertically, centered
+    // on each pane's right edge (inside the pane, so they move & scale with
+    // it and never cover app content elsewhere).
+    for (int index = 0; index < count; index++) {
+        UIView *pn = gPanes[index];
+        if (!pn || !gDragHandles[index]) continue;
+        CGRect b = pn.bounds;
+        CGFloat edgeW = 26;
+        CGFloat btnH = 40;
+        CGFloat hx = b.size.width - edgeW - 4;
+        CGFloat topY = MAX(floor((b.size.height - (btnH * 2 + 6)) / 2.0), 2);
+        gDragHandles[index].frame = CGRectMake(hx, topY, edgeW, btnH);
+        if (gCloseButtons[index]) {
+            gCloseButtons[index].frame = CGRectMake(hx, topY + btnH + 6, edgeW, btnH);
+        }
+        [pn bringSubviewToFront:gDragHandles[index]];
+        if (gCloseButtons[index]) [pn bringSubviewToFront:gCloseButtons[index]];
+    }
+
     // Toggle button removed from layout for car mode — no longer created.
     // In test mode, position the close button at the top-left.
     if (gToggleButton && gTestMode) {
@@ -2738,6 +2837,46 @@ UIColor *paneColor = [UIColor clearColor];
         // Single taps are never intercepted — they go to the hosted app.
         AttachPaneDragGesture(gPanes[index]);
 
+        // 0.1.57: per-pane controls — drag handle on top, close × below,
+        // pinned to the pane's right edge. Frames are set by Layout so they
+        // stay put while the pane moves/scales. The pan gesture on the
+        // handle drags the pane (tag = pane index).
+        CGFloat edgeW = 26;
+        CGFloat btnH = 40;
+        UIView *dragHandle = [[UIView alloc] initWithFrame:CGRectMake(0, 0, edgeW, btnH)];
+        dragHandle.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.35];
+        dragHandle.layer.cornerRadius = 4;
+        dragHandle.userInteractionEnabled = YES;
+        dragHandle.tag = index;
+        dragHandle.layer.zPosition = 9997;  // above the hosted appView
+        for (int dot = 0; dot < 3; dot++) {
+            UIView *line = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 12, 2)];
+            line.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.6];
+            line.layer.cornerRadius = 1;
+            line.center = CGPointMake(edgeW / 2.0, 9 + dot * 8);
+            [dragHandle addSubview:line];
+        }
+        UIPanGestureRecognizer *hPan = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
+                                                                               action:@selector(handleDrag:)];
+        [dragHandle addGestureRecognizer:hPan];
+        [gPanes[index] addSubview:dragHandle];
+        gDragHandles[index] = dragHandle;
+
+        UIButton *paneClose = [UIButton buttonWithType:UIButtonTypeCustom];
+        paneClose.frame = CGRectMake(0, 0, edgeW, btnH);
+        [paneClose setTitle:@"×" forState:UIControlStateNormal];
+        [paneClose setTitle:@"×" forState:UIControlStateHighlighted];
+        paneClose.titleLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightBold];
+        [paneClose setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.85] forState:UIControlStateNormal];
+        [paneClose setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
+        paneClose.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
+        paneClose.layer.cornerRadius = 4;
+        paneClose.tag = index;
+        paneClose.layer.zPosition = 9998;
+        [paneClose addTarget:gDragHandler action:@selector(closeButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [gPanes[index] addSubview:paneClose];
+        gCloseButtons[index] = paneClose;
+
         // Capsule button: shown when the pane is closed via ×. Displays
         // the app name, is draggable, and tapping it restores the pane.
         // Added to addTarget (the parent view), not the pane itself, so
@@ -2828,16 +2967,8 @@ UIColor *paneColor = [UIColor clearColor];
         [gResetButton addTarget:gDragHandler action:@selector(resetZoomTapped:) forControlEvents:UIControlEventTouchUpInside];
         [gControlStrip addSubview:gResetButton];
 
-        gCloseButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        [gCloseButton setTitle:@"×" forState:UIControlStateNormal];
-        [gCloseButton setTitle:@"×" forState:UIControlStateHighlighted];
-        gCloseButton.titleLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightBold];
-        [gCloseButton setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.85] forState:UIControlStateNormal];
-        [gCloseButton setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
-        gCloseButton.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
-        gCloseButton.layer.cornerRadius = 4;
-        [gCloseButton addTarget:gDragHandler action:@selector(closeButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [gControlStrip addSubview:gCloseButton];
+        // 0.1.57: the right-edge strip no longer has a close button — every
+        // pane carries its own × (gCloseButtons). gCloseButton stays nil.
 
         [window addSubview:gControlStrip];
     }
@@ -3019,7 +3150,7 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3045,7 +3176,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3069,7 +3200,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3092,7 +3223,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3153,7 +3284,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.56 loaded ---");
+        CLog(@"--- DashSplit 0.1.57 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
