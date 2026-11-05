@@ -1,30 +1,30 @@
 # DashSplit (CarPlay Split-Screen)
 
-A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts **up to 8 real apps** on the **CarPlay head-unit display** as draggable, zoomable, closable split-screen panes (e.g. DiDi + AMap navigation side by side). Each pane has its own drag / zoom / close controls, and the whole layout (position, zoom, closed state) is persisted and restored automatically when CarPlay reconnects.
+A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts **up to 8 real apps** on the **CarPlay head-unit display** as draggable, zoomable, closable split-screen panes (e.g. DiDi + AMap navigation side by side). **Long-press any pane to select and drag it**; a single controls strip pinned to the **right edge of the screen** (app-name label + continuous zoom slider + reset + close) operates on the currently selected pane without ever covering app content. The whole layout (position, zoom, closed state) is persisted and restored automatically when CarPlay reconnects.
 
 > 中文版：[README.md](README.md)
 
 - **Package**: `zp.dashsplit`
-- **Current version**: 0.1.54 ｜ iOS 15.0+ (arm64, Dopamine / palera1n style jailbreaks)
+- **Current version**: 0.1.55 ｜ iOS 15.0+ (arm64, Dopamine / palera1n style jailbreaks)
 - **Hosting reference**: [carplay-cast](https://github.com/EthanArbuckle/carplay-cast) (Apache-2.0)
 
 ---
 
-## Features (0.1.53)
+## Features (0.1.55)
 
 1. **Multi-app split screen**: pick up to 8 apps in Settings → 车载分屏 (saved as a comma-separated `SelectedApps` list). They all appear on the car display once CarPlay connects.
-2. **Right controls strip** on every pane, top to bottom:
-   - **Top 1/5 (drag zone)**: vertical drag handle — drag to move this pane anywhere (independently of the others).
-   - **＋**: zoom in 20% (clamped 0.2×–4×).
-   - **－**: zoom out 20%.
-   - **⟲ (reset)**: one tap restores the pre-zoom size (1.0×).
-   - **× (bottom)**: close the pane.
-3. **Capsule restore**: a closed pane becomes a draggable, labeled **capsule button** (app name); tap it to restore the pane.
-4. **Layout persistence**: drag offsets (normalized to screen width/height percentages), zoom factors and closed states are saved in real time to the `zp.dashsplit` preferences domain and **restored automatically after a CarPlay reconnect / SpringBoard respring**.
-5. **Lock-screen safety policy (0.1.28+)**: the tweak **never enters Live mode while the phone is unlocked** (prevents SpringBoard crashes). Panes are only displayed when the phone is locked — unlock auto-hides, lock auto-restores, and a "请锁屏手机后显示" (lock your phone) hint shows while hidden.
-6. **Phone test mode**: test the full hosting pipeline on the phone screen without a car.
-7. **Fit modes**: `FitMode` — 0 = aspect-fit (default), 1 = stretch fill.
-8. **Auto re-host**: crashed/backgrounded apps are re-hosted automatically, with a health-check fallback.
+2. **Long-press select + drag**: long-press (0.3 s) anywhere on a pane to select it as the **current pane** (border highlights) and start dragging; **single taps pass straight through to the app**.
+3. **Single right-edge controls strip**, pinned to the right edge of the screen (never overlaps app content), top to bottom:
+   - **Current app label**: the name of the selected pane's app.
+   - **Vertical continuous zoom slider**: seamlessly zoom the current pane 0.2×–4×, **anchored at the pane's center so it never drifts**; parts that grow beyond the screen are clipped.
+   - **⟲ (reset)**: restore the pre-zoom size (1.0×).
+   - **× (bottom)**: close the current pane.
+4. **Capsule restore**: a closed pane becomes a draggable, labeled **capsule button** (app name); tap it to restore the pane.
+5. **Layout persistence**: pane centers (normalized to screen width/height percentages), zoom factors and closed states are saved in real time to the `zp.dashsplit` preferences domain and **restored automatically after a CarPlay reconnect / SpringBoard respring**; **changing the app lineup resets the layout** so the new panes all appear expanded.
+6. **Lock-screen safety policy (0.1.28+)**: the tweak **never enters Live mode while the phone is unlocked** (prevents SpringBoard crashes). Panes are only displayed when the phone is locked — unlock auto-hides, lock auto-restores, and a "请锁屏手机后显示" (lock your phone) hint shows while hidden.
+7. **Phone test mode**: test the full hosting pipeline on the phone screen without a car (always opens every pane).
+8. **Fit modes**: `FitMode` — 0 = aspect-fit (default), 1 = stretch fill.
+9. **Auto re-host**: crashed/backgrounded apps are re-hosted automatically, with a health-check fallback.
 
 ---
 
@@ -32,11 +32,11 @@ A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts
 
 | Action | Where | Behavior |
 | --- | --- | --- |
-| Drag | **right strip, top 1/5 (drag zone)** | move this pane |
-| Zoom in | **right strip ＋** | pane grows 20% (overlaps others; they stay put) |
-| Zoom out | **right strip －** | pane shrinks 20% |
-| Reset size | **right strip ⟲** | back to pre-zoom size (1.0×) |
-| Close | **right strip × (bottom)** | collapse pane into a capsule |
+| Select current pane | **long-press anywhere on a pane (0.3 s)** | border highlights; the right-edge strip now controls it |
+| Drag | **long-press, then drag without lifting** | move the pane |
+| Zoom in/out | **right-edge strip slider** | seamless zoom of the current pane (0.2×–4×, anchored at pane center) |
+| Reset size | right-edge strip **⟲** | current pane back to 1.0× |
+| Close | right-edge strip **×** | collapse current pane into a capsule |
 | Restore | **tap the capsule** | show the pane again |
 | Move capsule | drag it | reposition |
 
@@ -65,7 +65,7 @@ Install OpenSSH on the device, then use `deploy.ps1` from this repo:
 
 ```powershell
 ./deploy.ps1 -Device 192.168.1.23 -Latest          # install newest release
-./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.54_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.55_iphoneos-arm64.deb
 ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow  # follow the log live
 ```
 
@@ -99,7 +99,7 @@ Prefs domain: `/var/mobile/Library/Preferences/zp.dashsplit.plist`
 | `FitMode` | 0 = aspect-fit (default), 1 = stretch fill |
 | `TestLandscape` | use landscape coordinates in phone test mode |
 | `TestOnMainScreen` | phone test mode toggle |
-| `PaneOffsetX0/PaneOffsetY0`… | per-pane drag offset (normalized %, saved/restored automatically) |
+| `PaneCenterX0/PaneCenterY0`… | per-pane center anchor (normalized %, saved/restored automatically) |
 | `PaneZoom0`… | per-pane zoom factor (saved/restored automatically) |
 | `PaneClosed0`… | per-pane closed state (saved/restored automatically) |
 
@@ -137,7 +137,7 @@ After a respring, the split-screen panes load straight onto the phone screen —
 
 `/var/mobile/Library/Logs/DashSplit.log` (256 KB rotation), including:
 
-- `--- DashSplit 0.1.54 loaded ---` — tweak loaded
+- `--- DashSplit 0.1.55 loaded ---` — tweak loaded
 - `probe: screens` — head-unit display detected (`car=1` / `carplay=1`)
 - `host: ...` — every step of app hosting
 - `ui: pane[0] restored off={...} zoom=... closed=...` — layout restore
@@ -164,6 +164,7 @@ Pushing to the `main` branch triggers `.github/workflows/build.yml`, which:
 
 ## Version history (summary)
 
+- **0.1.55**: interaction redesign — **long-press any pane (0.3 s) to select it as the current pane and drag it** (single taps pass through to the app); per-pane strips removed and replaced by a **single controls strip pinned to the right edge of the screen** (current app label + seamless zoom slider 0.2×–4× + ⟲ reset + × close) that never covers app content; zoom is now **continuous and anchored at the pane's center** (no drift), and panes may grow to 4× with overflow clipped; legacy drag offsets (`PaneOffsetX/Y`) are auto-migrated to center anchors (`PaneCenterX/Y`).
 - **0.1.54**: layout reset — **changing the selected apps now automatically wipes** the old per-pane offsets/zooms/closed states, so a new app lineup starts fresh with every pane visible; **phone test mode always opens all panes** (stale closed states from an earlier test session no longer reduce it to a row of capsules); multiple panes start **side by side with a small gap** instead of stacked on top of each other.
 - **0.1.53**: controls consolidated — drag, zoom in (＋), zoom out (－), reset (⟲, restores the pre-zoom size) and close (×) now all live in one **right vertical strip** (top 1/5 drag zone, then ＋/－/⟲/×); fixed zoom buttons being unresponsive (the whole strip is now lifted above the hosted app view); fixed black screen after tap-restoring a capsule in phone test mode (test mode skips the lock-screen gate and restores immediately).
 - **0.1.52**: UI redesign — the top horizontal drag handle became a **left vertical strip** (top: drag; bottom: ＋/− zoom, long-press reset to 1.0×); the close button became a **right vertical × strip**; independent per-pane zoom (overlaps neighbours); layout (offset/zoom/closed state) **persisted in real time and restored on reconnect**.

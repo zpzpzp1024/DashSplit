@@ -14,7 +14,7 @@ private let keyFitMode = "FitMode"
 private let keyTestLandscape = "TestLandscape"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.54"
+private let tweakVersion = "0.1.55"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 
