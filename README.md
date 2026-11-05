@@ -5,7 +5,7 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 > English version: [README.en.md](README.en.md)
 
 - **包名**：`zp.dashsplit`
-- **当前版本**：0.1.53 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
+- **当前版本**：0.1.54 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
 - **宿主模式参考**：[carplay-cast](https://github.com/EthanArbuckle/carplay-cast)（Apache-2.0）
 
 ---
@@ -65,7 +65,7 @@ killall -9 SpringBoard
 
 ```powershell
 ./deploy.ps1 -Device 192.168.1.23 -Latest        # 安装最新 release
-./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.53_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.54_iphoneos-arm64.deb
 ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow # 实时跟日志
 ```
 
@@ -137,7 +137,7 @@ done | grep -i didi   # 替换为要查的 App 关键字
 
 `/var/mobile/Library/Logs/DashSplit.log`（256 KB 自动轮转），包含：
 
-- `--- DashSplit 0.1.53 loaded ---`：tweak 加载
+- `--- DashSplit 0.1.54 loaded ---`：tweak 加载
 - `probe: screens`：车机屏识别（`car=1` / `carplay=1`）
 - `host: ...`：宿主 App 的每一步
 - `ui: pane[0] restored off={...} zoom=... closed=...`：布局恢复
@@ -164,6 +164,7 @@ make package FINALPACKAGE=1
 
 ## 版本记录（摘要）
 
+- **0.1.54**：布局重置——**重新选择应用后自动清空**旧的偏移/缩放/关闭状态，新的 App 组合以全新布局出现，所有面板默认显示；**手机测试模式始终打开所有面板**（不再继承上次测试遗留的「关闭」胶囊状态）；多个面板初始**从左到右并排展开**，不再叠在一起遮挡。
 - **0.1.53**：控件整合——拖动、放大（＋）、缩小（－）、重置（⟲，恢复缩放前大小）、关闭（×）全部集中在**右侧竖条**（上 1/5 拖动区 + 依次排列的 ＋/－/⟲/×）；修复缩放按钮点击无响应（整个控制条提到 App 视图之上）；修复手机测试模式点胶囊恢复后黑屏（测试模式跳过锁屏门禁、立即恢复）。
 - **0.1.52**：UI 改版——顶部横向拖动手柄改为**左侧竖条**（上：拖动；下：＋/− 缩放，长按恢复 1.0×）；关闭按钮改为**右侧竖条 ×**；每个面板独立缩放（覆盖其他面板）；布局（偏移/缩放/关闭状态）**实时保存并在重连后恢复**。
 - **0.1.49**：解锁时只隐藏面板、保留胶囊栏，不置 `closed` 状态。

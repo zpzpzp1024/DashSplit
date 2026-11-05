@@ -5,7 +5,7 @@ A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts
 > 中文版：[README.md](README.md)
 
 - **Package**: `zp.dashsplit`
-- **Current version**: 0.1.53 ｜ iOS 15.0+ (arm64, Dopamine / palera1n style jailbreaks)
+- **Current version**: 0.1.54 ｜ iOS 15.0+ (arm64, Dopamine / palera1n style jailbreaks)
 - **Hosting reference**: [carplay-cast](https://github.com/EthanArbuckle/carplay-cast) (Apache-2.0)
 
 ---
@@ -65,7 +65,7 @@ Install OpenSSH on the device, then use `deploy.ps1` from this repo:
 
 ```powershell
 ./deploy.ps1 -Device 192.168.1.23 -Latest          # install newest release
-./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.53_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.54_iphoneos-arm64.deb
 ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow  # follow the log live
 ```
 
@@ -137,7 +137,7 @@ After a respring, the split-screen panes load straight onto the phone screen —
 
 `/var/mobile/Library/Logs/DashSplit.log` (256 KB rotation), including:
 
-- `--- DashSplit 0.1.53 loaded ---` — tweak loaded
+- `--- DashSplit 0.1.54 loaded ---` — tweak loaded
 - `probe: screens` — head-unit display detected (`car=1` / `carplay=1`)
 - `host: ...` — every step of app hosting
 - `ui: pane[0] restored off={...} zoom=... closed=...` — layout restore
@@ -164,6 +164,7 @@ Pushing to the `main` branch triggers `.github/workflows/build.yml`, which:
 
 ## Version history (summary)
 
+- **0.1.54**: layout reset — **changing the selected apps now automatically wipes** the old per-pane offsets/zooms/closed states, so a new app lineup starts fresh with every pane visible; **phone test mode always opens all panes** (stale closed states from an earlier test session no longer reduce it to a row of capsules); multiple panes start **side by side with a small gap** instead of stacked on top of each other.
 - **0.1.53**: controls consolidated — drag, zoom in (＋), zoom out (－), reset (⟲, restores the pre-zoom size) and close (×) now all live in one **right vertical strip** (top 1/5 drag zone, then ＋/－/⟲/×); fixed zoom buttons being unresponsive (the whole strip is now lifted above the hosted app view); fixed black screen after tap-restoring a capsule in phone test mode (test mode skips the lock-screen gate and restores immediately).
 - **0.1.52**: UI redesign — the top horizontal drag handle became a **left vertical strip** (top: drag; bottom: ＋/− zoom, long-press reset to 1.0×); the close button became a **right vertical × strip**; independent per-pane zoom (overlaps neighbours); layout (offset/zoom/closed state) **persisted in real time and restored on reconnect**.
 - **0.1.49**: on unlock, only hide panes and keep the capsule row — don't mark them closed.

@@ -111,6 +111,7 @@
 #define MAX_PANES 8
 
 static NSString *const kPrefsHostApps = @"SelectedApps";  // comma-separated bundle IDs
+static NSString *const kPrefsLastSelectedApps = @"LastSelectedApps"; // layout-reset sentinel
 static NSString *const kPrefsEnabled  = @"Enabled";
 static NSString *const kPrefsTestMain = @"TestOnMainScreen";
 static NSString *const kPrefsTestLandscape = @"TestLandscape";
@@ -1909,9 +1910,14 @@ static void SavePaneLayoutState(void)
         CFPreferencesSetAppValue((__bridge CFStringRef)kZ,
                                  (__bridge CFNumberRef)@(gPaneZoom[index]),
                                  CFSTR("zp.dashsplit"));
-        CFPreferencesSetAppValue((__bridge CFStringRef)kC,
-                                 gPaneClosed[index] ? kCFBooleanTrue : kCFBooleanFalse,
-                                 CFSTR("zp.dashsplit"));
+        // 0.1.54: test mode never persists the closed state — every test
+        // session opens all panes so a stale capsule row can't look like a
+        // hosting failure. Car mode keeps its own closed-state persistence.
+        if (!gTestMode) {
+            CFPreferencesSetAppValue((__bridge CFStringRef)kC,
+                                     gPaneClosed[index] ? kCFBooleanTrue : kCFBooleanFalse,
+                                     CFSTR("zp.dashsplit"));
+        }
     }
     CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
     CLog(@"ui: pane layout saved (%d panes)", count);
@@ -1929,6 +1935,37 @@ static void LoadPaneLayoutState(void)
     CGFloat h = host.bounds.size.height;
     if (w <= 0 || h <= 0) w = h = 1.0;
 
+    // 0.1.54: if the selected apps changed since the last layout was saved,
+    // the per-pane offsets/zooms/closed states (indexed by pane POSITION,
+    // not by app) no longer describe this lineup — e.g. a pane the user
+    // closed before would reappear as a capsule under a different app and
+    // look like "the split never showed up". Reset everything so the new
+    // selection starts fresh with every pane visible.
+    NSArray *currentIDs = SelectedBundleIDs();
+    NSString *joined = [currentIDs componentsJoinedByString:@","];
+    NSString *lastJoined = PrefString(kPrefsLastSelectedApps);
+    if (lastJoined.length && ![lastJoined isEqualToString:joined]) {
+        // Wipe the stale per-pane layout keys so nothing leaks back later.
+        for (int index = 0; index < MAX_PANES; index++) {
+            CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneOffsetX%d", index], NULL, CFSTR("zp.dashsplit"));
+            CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneOffsetY%d", index], NULL, CFSTR("zp.dashsplit"));
+            CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneZoom%d", index], NULL, CFSTR("zp.dashsplit"));
+            CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneClosed%d", index], NULL, CFSTR("zp.dashsplit"));
+            gPaneOffsets[index] = CGPointZero;
+            gPaneZoom[index] = 1.0f;
+            gPaneClosed[index] = NO;
+        }
+        CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
+        CLog(@"ui: selected apps changed (was %@, now %@) — layout reset", lastJoined, joined);
+        return;
+    }
+
+    // Remember the current lineup for the next comparison.
+    CFPreferencesSetAppValue((__bridge CFStringRef)kPrefsLastSelectedApps,
+                             (__bridge CFStringRef)joined,
+                             CFSTR("zp.dashsplit"));
+    CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
+
     int count = PaneCount();
     for (int index = 0; index < count; index++) {
         NSString *kX = [NSString stringWithFormat:@"PaneOffsetX%d", index];
@@ -1945,6 +1982,10 @@ static void LoadPaneLayoutState(void)
         CGFloat fy = [vY isKindOfClass:[NSNumber class]] ? [(NSNumber *)vY doubleValue] : 0;
         CGFloat zoom = [vZ isKindOfClass:[NSNumber class]] ? [(NSNumber *)vZ doubleValue] : 1.0f;
         BOOL closed = [vC isKindOfClass:[NSNumber class]] ? [(NSNumber *)vC boolValue] : NO;
+        // 0.1.54: test mode always opens every pane — a stale closed state
+        // from an earlier test session must not hide panes in the test
+        // window (it showed only capsules and looked like a failure).
+        if (gTestMode) closed = NO;
 
         gPaneOffsets[index] = CGPointMake(fx * w, fy * h);
         gPaneZoom[index] = zoom;
@@ -2399,8 +2440,10 @@ static void Layout(void)
             // Guard against zero-size panes (extreme zoom-out).
             if (scaledW < 60) scaledW = 60;
             if (scaledH < 60) scaledH = 60;
-            // Stagger initial x position so panes don't perfectly overlap.
-            CGFloat staggerX = index * floor(baseUnit * 0.3);
+            // Stagger initial x position so multiple panes start laid out
+            // side by side (small gap) instead of stacked on top of each
+            // other — stacked panes made it look like only one split existed.
+            CGFloat staggerX = index * (scaledW + 12);
             CGFloat centerX = sideMargin + staggerX + scaledW / 2.0;
             CGFloat centerY = paneHeight / 2.0;
             CGFloat scaledX = centerX - scaledW / 2.0;
@@ -3030,7 +3073,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.53 loaded ---");
+        CLog(@"--- DashSplit 0.1.54 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
