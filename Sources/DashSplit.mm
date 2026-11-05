@@ -1285,6 +1285,7 @@ static CGPoint gDragStartPoint = CGPointZero;
 static void SelectPane(int index);
 static void SetPaneZoom(int index, CGFloat zoom);
 static void LayoutControls(CGRect bounds);
+static void AttachPaneDragGesture(UIView *target);
 
 static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
 {
@@ -1464,7 +1465,15 @@ static HostSlot *HostApplication(NSString *bundleID, UIView *container, int slot
         CLog(@"host: %@ controller has no view", bundleID);
         return nil;
     }
-    
+
+    // 0.1.56: touches landing on the remote scene view never reach a gesture
+    // attached to the pane (the remote layer consumes them), so long-pressing
+    // actual app content did nothing. Attach the same long-press drag gesture
+    // straight onto the appView: a long-press on app content now selects &
+    // drags the pane too, and once it fires the gesture cancels that touch to
+    // the app (plain taps still pass through).
+    AttachPaneDragGesture(appView);
+
     ScaleAppViewIntoContainer(appView, container);
     
     CLog(@"host: %@ attached", bundleID);
@@ -1649,14 +1658,26 @@ static void LayoutCapsuleForPane(int index)
     UIView *pane = gesture.view;
     if (!pane) return;
 
+    // The gesture may be attached to the pane itself (empty/black area) or
+    // to its hosted appView (remote scene view). Walk up until we find the
+    // pane the touch belongs to.
     int paneIndex = -1;
-    for (int i = 0; i < MAX_PANES; i++) {
-        if (gPanes[i] == pane) { paneIndex = i; break; }
+    UIView *probe = pane;
+    while (probe) {
+        for (int i = 0; i < MAX_PANES; i++) {
+            if (gPanes[i] == probe) { paneIndex = i; break; }
+        }
+        if (paneIndex >= 0) break;
+        probe = probe.superview;
     }
     if (paneIndex < 0 || gPaneClosed[paneIndex]) return;
 
-    UIView *parent = pane.superview;
-    if (!parent) return;
+    // Always operate on the REAL pane, never the gesture's attached view
+    // (which may be the hosted appView): parent = pane's coordinate space,
+    // and pane size comes from the pane itself.
+    UIView *thePane = gPanes[paneIndex];
+    UIView *parent = thePane.superview;
+    if (!thePane || !parent) return;
 
     if (gesture.state == UIGestureRecognizerStateBegan) {
         SelectPane(paneIndex);
@@ -1669,8 +1690,8 @@ static void LayoutCapsuleForPane(int index)
         gPaneCenters[paneIndex].y = gDragStartCenter.y + (now.y - gDragStartPoint.y);
 
         // Keep at least 40pt of the pane visible on each axis.
-        CGFloat w = pane.bounds.size.width;
-        CGFloat h = pane.bounds.size.height;
+        CGFloat w = thePane.bounds.size.width;
+        CGFloat h = thePane.bounds.size.height;
         CGFloat minVisible = 40;
         CGFloat minX = minVisible - w / 2.0;
         CGFloat maxX = parent.bounds.size.width - minVisible + w / 2.0;
@@ -1681,8 +1702,8 @@ static void LayoutCapsuleForPane(int index)
         if (gPaneCenters[paneIndex].y < minY) gPaneCenters[paneIndex].y = minY;
         if (gPaneCenters[paneIndex].y > maxY) gPaneCenters[paneIndex].y = maxY;
 
-        pane.center = gPaneCenters[paneIndex];
-        gPaneBaseFrames[paneIndex] = pane.frame;
+        thePane.center = gPaneCenters[paneIndex];
+        gPaneBaseFrames[paneIndex] = thePane.frame;
     } else if (gesture.state == UIGestureRecognizerStateEnded ||
                gesture.state == UIGestureRecognizerStateCancelled) {
         SavePaneLayoutState();
@@ -1821,6 +1842,23 @@ static NSString *AppNameForSlot(int paneIndex)
 @end
 
 static DashSplitDragHandler *gDragHandler;
+
+// 0.1.56: attach the pane long-press drag gesture to a view. Used for BOTH
+// the pane itself and its hosted appView (see HostApplication) so every pixel
+// of a pane — including real app content — can start a drag. When the gesture
+// fires, its default cancelsTouchesInView stops that touch from reaching the
+// app; plain taps still pass through.
+static void AttachPaneDragGesture(UIView *target)
+{
+    if (!target) return;
+    if (!gDragHandler) gDragHandler = [DashSplitDragHandler new];
+    UILongPressGestureRecognizer *press =
+        [[UILongPressGestureRecognizer alloc] initWithTarget:gDragHandler
+                                                     action:@selector(handlePanePress:)];
+    press.minimumPressDuration = 0.3;
+    press.allowableMovement = 500.0;
+    [target addGestureRecognizer:press];
+}
 
 // 0.1.55: mark a pane as the "current" one for the single right-edge strip.
 // Highlights its border and syncs the strip's label/slider/button state.
@@ -2693,14 +2731,12 @@ UIColor *paneColor = [UIColor clearColor];
         gPanes[index] = MakePane(title, paneColor);
         [addTarget addSubview:gPanes[index]];
 
-        // 0.1.55: a long-press anywhere on the pane selects it as the
+        // 0.1.55+: a long-press anywhere on the pane selects it as the
         // current pane (for the right-edge strip) AND starts dragging it.
+        // 0.1.56: the same gesture is also attached to each pane's hosted
+        // appView in HostApplication, so app content long-presses work too.
         // Single taps are never intercepted — they go to the hosted app.
-        UILongPressGestureRecognizer *press = [[UILongPressGestureRecognizer alloc] initWithTarget:gDragHandler
-                                                                                           action:@selector(handlePanePress:)];
-        press.minimumPressDuration = 0.3;
-        press.allowableMovement = 500.0;
-        [gPanes[index] addGestureRecognizer:press];
+        AttachPaneDragGesture(gPanes[index]);
 
         // Capsule button: shown when the pane is closed via ×. Displays
         // the app name, is draggable, and tapping it restores the pane.
@@ -3117,7 +3153,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.55 loaded ---");
+        CLog(@"--- DashSplit 0.1.56 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

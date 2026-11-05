@@ -1,19 +1,19 @@
 # DashSplit (CarPlay Split-Screen)
 
-A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts **up to 8 real apps** on the **CarPlay head-unit display** as draggable, zoomable, closable split-screen panes (e.g. DiDi + AMap navigation side by side). **Long-press any pane to select and drag it**; a single controls strip pinned to the **right edge of the screen** (app-name label + continuous zoom slider + reset + close) operates on the currently selected pane without ever covering app content. The whole layout (position, zoom, closed state) is persisted and restored automatically when CarPlay reconnects.
+A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts **up to 8 real apps** on the **CarPlay head-unit display** as draggable, zoomable, closable split-screen panes (e.g. DiDi + AMap navigation side by side). **Long-press any pane — including black/empty areas and real app content — to select and drag it**; a single controls strip pinned to the **right edge of the screen** (app-name label + continuous zoom slider + reset + close) operates on the currently selected pane without ever covering app content. The whole layout (position, zoom, closed state) is persisted and restored automatically when CarPlay reconnects. The app picker in Settings **pins selected apps to the top** (grouped), so unchecking them is easy.
 
 > 中文版：[README.md](README.md)
 
 - **Package**: `zp.dashsplit`
-- **Current version**: 0.1.55 ｜ iOS 15.0+ (arm64, Dopamine / palera1n style jailbreaks)
+- **Current version**: 0.1.56 ｜ iOS 15.0+ (arm64, Dopamine / palera1n style jailbreaks)
 - **Hosting reference**: [carplay-cast](https://github.com/EthanArbuckle/carplay-cast) (Apache-2.0)
 
 ---
 
-## Features (0.1.55)
+## Features (0.1.56)
 
-1. **Multi-app split screen**: pick up to 8 apps in Settings → 车载分屏 (saved as a comma-separated `SelectedApps` list). They all appear on the car display once CarPlay connects.
-2. **Long-press select + drag**: long-press (0.3 s) anywhere on a pane to select it as the **current pane** (border highlights) and start dragging; **single taps pass straight through to the app**.
+1. **Multi-app split screen**: pick up to 8 apps in Settings → 车载分屏 (saved as a comma-separated `SelectedApps` list). They all appear on the car display once CarPlay connects; **selected apps are pinned to the top of the picker in their own group** (easy to uncheck). The checked order defines the left-to-right split order — pinning does not change it.
+2. **Long-press select + drag**: long-press (0.3 s) anywhere on a pane to select it as the **current pane** (border highlights) and start dragging — **this works on every pixel of the pane**: both black/empty areas and real app content (when you long-press app content, the gesture takes that touch over once recognized); **single taps pass straight through to the app**.
 3. **Single right-edge controls strip**, pinned to the right edge of the screen (never overlaps app content), top to bottom:
    - **Current app label**: the name of the selected pane's app.
    - **Vertical continuous zoom slider**: seamlessly zoom the current pane 0.2×–4×, **anchored at the pane's center so it never drifts**; parts that grow beyond the screen are clipped.
@@ -32,8 +32,8 @@ A jailbreak tweak (Theos + Objective-C++, injected into SpringBoard) that mounts
 
 | Action | Where | Behavior |
 | --- | --- | --- |
-| Select current pane | **long-press anywhere on a pane (0.3 s)** | border highlights; the right-edge strip now controls it |
-| Drag | **long-press, then drag without lifting** | move the pane |
+| Select current pane | **long-press anywhere on a pane (0.3 s)** — app content included | border highlights; the right-edge strip now controls it |
+| Drag | **long-press, then drag without lifting** — app content included | move the pane; the app doesn't respond while dragging, resumes on release |
 | Zoom in/out | **right-edge strip slider** | seamless zoom of the current pane (0.2×–4×, anchored at pane center) |
 | Reset size | right-edge strip **⟲** | current pane back to 1.0× |
 | Close | right-edge strip **×** | collapse current pane into a capsule |
@@ -65,7 +65,7 @@ Install OpenSSH on the device, then use `deploy.ps1` from this repo:
 
 ```powershell
 ./deploy.ps1 -Device 192.168.1.23 -Latest          # install newest release
-./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.55_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.56_iphoneos-arm64.deb
 ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow  # follow the log live
 ```
 
@@ -137,7 +137,7 @@ After a respring, the split-screen panes load straight onto the phone screen —
 
 `/var/mobile/Library/Logs/DashSplit.log` (256 KB rotation), including:
 
-- `--- DashSplit 0.1.55 loaded ---` — tweak loaded
+- `--- DashSplit 0.1.56 loaded ---` — tweak loaded
 - `probe: screens` — head-unit display detected (`car=1` / `carplay=1`)
 - `host: ...` — every step of app hosting
 - `ui: pane[0] restored off={...} zoom=... closed=...` — layout restore
@@ -164,6 +164,7 @@ Pushing to the `main` branch triggers `.github/workflows/build.yml`, which:
 
 ## Version history (summary)
 
+- **0.1.56**: interaction polish — **long-pressing real app content now drags the pane too** (the long-press gesture is also attached to the remote scene view; once recognized the touch is taken over from the app, taps still pass through); the **app picker pins selected apps to the top** in a 「已选择」 (selected) group above 「全部应用」 (all apps), each alphabetical — unchecking is effortless and the split order is unaffected.
 - **0.1.55**: interaction redesign — **long-press any pane (0.3 s) to select it as the current pane and drag it** (single taps pass through to the app); per-pane strips removed and replaced by a **single controls strip pinned to the right edge of the screen** (current app label + seamless zoom slider 0.2×–4× + ⟲ reset + × close) that never covers app content; zoom is now **continuous and anchored at the pane's center** (no drift), and panes may grow to 4× with overflow clipped; legacy drag offsets (`PaneOffsetX/Y`) are auto-migrated to center anchors (`PaneCenterX/Y`).
 - **0.1.54**: layout reset — **changing the selected apps now automatically wipes** the old per-pane offsets/zooms/closed states, so a new app lineup starts fresh with every pane visible; **phone test mode always opens all panes** (stale closed states from an earlier test session no longer reduce it to a row of capsules); multiple panes start **side by side with a small gap** instead of stacked on top of each other.
 - **0.1.53**: controls consolidated — drag, zoom in (＋), zoom out (－), reset (⟲, restores the pre-zoom size) and close (×) now all live in one **right vertical strip** (top 1/5 drag zone, then ＋/－/⟲/×); fixed zoom buttons being unresponsive (the whole strip is now lifted above the hosted app view); fixed black screen after tap-restoring a capsule in phone test mode (test mode skips the lock-screen gate and restores immediately).

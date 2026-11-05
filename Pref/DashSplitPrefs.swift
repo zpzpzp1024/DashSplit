@@ -14,7 +14,7 @@ private let keyFitMode = "FitMode"
 private let keyTestLandscape = "TestLandscape"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.55"
+private let tweakVersion = "0.1.56"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 
@@ -235,29 +235,44 @@ class MultiAppPickerController: PSListController {
             let apps = installedApps()
             rowTargets = []
 
+            // 0.1.56: selected apps are pinned to the top in their own group
+            // (alphabetical), unselected apps below — easy to find & uncheck.
+            // SelectedApps ORDER is untouched, so the on-screen split order
+            // stays exactly as the user checked them.
             var specifiers = NSMutableArray()
             specifiers.add(PSSpecifier.emptyGroup())
 
-            for app in apps {
-                let bid = app["id"] ?? ""
-                let name = app["name"] ?? ""
-                let isSelected = selected.contains(bid)
-                let title = isSelected ? "✓ \(name)" : name
+            let groups: [(title: String, isSelected: Bool)] = [
+                ("已选择", true),
+                ("全部应用", false)
+            ]
+            for group in groups {
+                let groupHasApps = apps.contains { selected.contains($0["id"] ?? "") == group.isSelected }
+                if !groupHasApps { continue }
+                let groupSpec = PSSpecifier.emptyGroup()!
+                groupSpec.name = group.title
+                specifiers.add(groupSpec)
 
-                let target = MultiAppRowTarget(bundleID: bid, picker: self)
-                rowTargets.append(target)
+                for app in apps where selected.contains(app["id"] ?? "") == group.isSelected {
+                    let bid = app["id"] ?? ""
+                    let name = app["name"] ?? ""
+                    let title = group.isSelected ? "✓ \(name)" : name
 
-                let row = PSSpecifier.preferenceSpecifierNamed(
-                    title,
-                    target: target,
-                    set: nil,
-                    get: nil,
-                    detail: nil,
-                    cell: .buttonCell,
-                    edit: nil
-                )
-                row?.buttonAction = #selector(MultiAppRowTarget.toggleApp)
-                if let row = row { specifiers.add(row) }
+                    let target = MultiAppRowTarget(bundleID: bid, picker: self)
+                    rowTargets.append(target)
+
+                    let row = PSSpecifier.preferenceSpecifierNamed(
+                        title,
+                        target: target,
+                        set: nil,
+                        get: nil,
+                        detail: nil,
+                        cell: .buttonCell,
+                        edit: nil
+                    )
+                    row?.buttonAction = #selector(MultiAppRowTarget.toggleApp)
+                    if let row = row { specifiers.add(row) }
+                }
             }
 
             setValue(specifiers, forKey: "_specifiers")
