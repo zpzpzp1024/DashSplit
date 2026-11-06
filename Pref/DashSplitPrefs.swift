@@ -7,6 +7,7 @@
 import Preferences
 import UIKit
 import ObjectiveC
+import Darwin
 
 private let prefsFile = "/var/mobile/Library/Preferences/zp.dashsplit.plist"
 private let keyEnabled = "Enabled"
@@ -207,7 +208,8 @@ private func appIcon(for bundleID: String) -> UIImage? {
         return icon
     }
 
-    // Fallback: iconDataForVariant: takes a plain int → objc_msgSend.
+    // Fallback: iconDataForVariant: takes a plain int → objc_msgSend, resolved
+    // through dlsym (Swift cannot reference the variadic C symbol directly).
     guard
         let proxyClass = NSClassFromString("LSApplicationProxy") as? NSObject.Type,
         let proxy = proxyClass.perform(NSSelectorFromString("applicationProxyForIdentifier:"), with: bundleID)?.takeUnretainedValue() as? NSObject
@@ -216,9 +218,10 @@ private func appIcon(for bundleID: String) -> UIImage? {
     let selector = NSSelectorFromString("iconDataForVariant:")
     guard proxy.responds(to: selector) else { return nil }
 
-    typealias IconDataFunction = @convention(c) (AnyObject, Selector, Int32) -> Unmanaged<AnyObject>?
-    let call = unsafeBitCast(objc_msgSend, to: IconDataFunction.self)
-    guard let unmanaged = call(proxy, selector, 2) else { return nil }
+    typealias MsgSendFunction = @convention(c) (AnyObject, Selector, Int32) -> Unmanaged<AnyObject>?
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "objc_msgSend") else { return nil }  // RTLD_DEFAULT
+    let msgSend = unsafeBitCast(symbol, to: MsgSendFunction.self)
+    guard let unmanaged = msgSend(proxy, selector, 2) else { return nil }
     let data = unmanaged.takeUnretainedValue() as? Data
     return data.flatMap(UIImage.init)
 }
