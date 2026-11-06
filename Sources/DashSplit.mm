@@ -301,8 +301,10 @@ static int FitMode(void)
 static NSArray<NSString *> *SelectedBundleIDs(void)
 {
     NSString *raw = PrefString(kPrefsHostApps);
-    if (!raw.length) {
-        // Defaults: 时钟 + 日历
+    if (!raw) {
+        // 0.1.59: key ABSENT = first install, never configured → keep the
+        // default 时钟+日历. An explicitly empty string (user deselected
+        // every app) is honored as-is: no panes at all.
         raw = @"com.apple.mobiletimer,com.apple.mobilecal";
     }
     NSMutableArray *ids = [NSMutableArray array];
@@ -1277,6 +1279,10 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
 
 // Capsule buttons shown when a pane is closed via ×. Tapping restores the pane.
 static UIButton *gCapsules[MAX_PANES];
+// 0.1.59: capsule dragged away from its docked top-row slot — keeps its
+// freed position for the rest of the hosting session (reset on reconnect
+// or when the pane is re-opened and then closed again).
+static BOOL gCapsuleDetached[MAX_PANES];
 
 // 0.1.55: a single controls strip pinned to the RIGHT edge of the screen — it
 // never overlaps app content and always stays visible. It operates on the
@@ -1572,6 +1578,8 @@ static void TeardownAllHosts(void)
     gManualAwaitingStart = NO;
     gAutoStartArmed = NO;
     gAutoStartAt = 0;
+    // 0.1.59: new hosting session → every capsule docks at its top slot again.
+    for (int i = 0; i < MAX_PANES; i++) gCapsuleDetached[i] = NO;
     // Re-assert after teardown: FitAppViewToContainer calls during invalidate
     // may have re-enabled it.
     gNativeFillActive = NO;
@@ -1637,48 +1645,81 @@ static void SavePaneLayoutState(void);
 static void LoadPaneLayoutState(void);
 static void RestoreNow(void);
 
-// Position and reveal the capsule for a closed pane at the pane's base-frame
-// center (clamped to the parent). Shared by closeButtonTapped and the
-// layout-restore path so a restored closed pane shows its capsule correctly.
+// 0.1.59: dock every closed pane's capsule into a fixed top row, horizontally
+// centered, one slot per selection index. Open panes leave their slot empty
+// (fixed-slot semantics: a capsule always returns to ITS slot, neighbours
+// never shift). Capsules the user dragged away (gCapsuleDetached) keep their
+// freed spot for the rest of the hosting session.
+static void LayoutCapsuleRow(void)
+{
+    int count = PaneCount();
+    if (!gWindow || count <= 0) return;
+    if (count > MAX_PANES) count = MAX_PANES;
+
+    UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
+    const CGFloat topY = 8;          // docked against the top of the screen
+    const CGFloat capsuleH = 36;
+    const CGFloat spacing = 10;      // 胶囊间距:稍微留一点间距
+    const CGFloat hPad = 24;         // horizontal padding inside each capsule
+
+    // First pass: title every capsule and measure its slot width. The title
+    // is stable per slot even while the pane is open, so a hidden (open)
+    // slot keeps exactly the width its capsule needs — neighbours never jump.
+    CGFloat slotW[MAX_PANES];
+    CGFloat totalW = 0;
+    for (int i = 0; i < count; i++) {
+        UIButton *cap = gCapsules[i];
+        if (!cap) { slotW[i] = 0; continue; }
+
+        HostSlot *slot = gSlots[i];
+        NSString *name = nil;
+        if (slot && slot.bundleID) {
+            name = AppDisplayName(slot.bundleID);
+        } else {
+            // Slot not built yet (connect-restore path): fall back to the raw
+            // bundle ID's display name so the capsule shows the app name.
+            NSString *bid = HostBundleIDForIndex(i);
+            name = bid.length ? AppDisplayName(bid) : @"App";
+        }
+        [cap setTitle:name forState:UIControlStateNormal];
+        [cap setTitle:name forState:UIControlStateHighlighted];
+        [cap sizeToFit];
+        slotW[i] = cap.frame.size.width + hPad;
+        totalW += slotW[i];
+        if (i > 0) totalW += spacing;
+    }
+
+    // Center the whole row on the screen (clamp against the left edge).
+    CGFloat startX = (host.bounds.size.width - totalW) / 2.0;
+    if (startX < 8) startX = 8;
+
+    CGFloat x = startX;
+    for (int i = 0; i < count; i++) {
+        UIButton *cap = gCapsules[i];
+        if (!cap) { x += slotW[i] + spacing; continue; }
+
+        if (gPaneClosed[i]) {
+            cap.hidden = NO;
+            if (!gCapsuleDetached[i]) {
+                // Docked: this selection index's fixed slot at the top.
+                cap.frame = CGRectMake(x, topY, slotW[i], capsuleH);
+            }
+            // Detached: keep the freed position until the pane is
+            // re-opened and closed again (reset in closeButtonTapped).
+        } else {
+            cap.hidden = YES;   // pane open — slot stays reserved
+        }
+        x += slotW[i] + spacing;
+    }
+    CLog(@"ui: capsule row relaid (%d slots)", count);
+}
+
+// Compatibility shim: every existing call site now resolves to the docked
+// top row instead of the old per-pane "center of the pane" spot.
 static void LayoutCapsuleForPane(int index)
 {
-    if (index < 0 || index >= MAX_PANES) return;
-    UIButton *capsule = gCapsules[index];
-    UIView *pane = gPanes[index];
-    if (!capsule || !pane) return;
-
-    HostSlot *slot = gSlots[index];
-    NSString *name = nil;
-    if (slot && slot.bundleID) {
-        name = AppDisplayName(slot.bundleID);
-    } else {
-        // Slot not built yet (connect-restore path): fall back to the raw
-        // bundle ID's display name so the capsule shows the app name.
-        NSString *bid = HostBundleIDForIndex(index);
-        name = bid.length ? AppDisplayName(bid) : @"App";
-    }
-    [capsule setTitle:name forState:UIControlStateNormal];
-    [capsule setTitle:name forState:UIControlStateHighlighted];
-    [capsule sizeToFit];
-    CGRect f = capsule.frame;
-    f.size.width += 24;
-    f.size.height += 12;
-    capsule.frame = f;
-
-    UIView *parent = pane.superview;
-    if (parent) {
-        CGRect baseFrame = gPaneBaseFrames[index];
-        CGPoint center = CGPointMake(baseFrame.origin.x + baseFrame.size.width / 2.0,
-                                     baseFrame.origin.y + baseFrame.size.height / 2.0);
-        CGFloat halfW = f.size.width / 2.0;
-        CGFloat halfH = f.size.height / 2.0;
-        if (center.x < halfW) center.x = halfW;
-        if (center.x > parent.bounds.size.width - halfW) center.x = parent.bounds.size.width - halfW;
-        if (center.y < halfH) center.y = halfH;
-        if (center.y > parent.bounds.size.height - halfH) center.y = parent.bounds.size.height - halfH;
-        capsule.center = center;
-    }
-    capsule.hidden = NO;
+    (void)index;   // shim: whole-row layout ignores the per-pane index
+    LayoutCapsuleRow();
 }
 
 // 0.1.58: position one pane's external toolbar from the pane's current base
@@ -1878,6 +1919,11 @@ static void ShowToast(NSString *text)
     }
     if (paneIndex < 0) return;
 
+    // 0.1.59: once the user drags a capsule it leaves its docked slot for the
+    // rest of the session (reset next time the pane is reopened and closed
+    // again, or on reconnect).
+    gCapsuleDetached[paneIndex] = YES;
+
     UIView *parent = capsule.superview;
     if (!parent) return;
 
@@ -1900,14 +1946,6 @@ static void ShowToast(NSString *text)
     }
 }
 
-// Get a short display name for the app in the given slot.
-static NSString *AppNameForSlot(int paneIndex)
-{
-    HostSlot *slot = gSlots[paneIndex];
-    if (!slot || !slot.bundleID) return @"App";
-    return AppDisplayName(slot.bundleID);
-}
-
 - (void)closeButtonTapped:(UIButton *)sender
 {
     // 0.1.57: every pane has its own ×; close the pane this button belongs to.
@@ -1927,10 +1965,13 @@ static NSString *AppNameForSlot(int paneIndex)
     // Stand the controller down from Live (safe, crash-proof).
     SlotSetMode(paneIndex, 0);
 
+    // 0.1.59: re-closing the app docks its capsule back into the top row.
+    gCapsuleDetached[paneIndex] = NO;
+
     // Persist the closed state so a re-connect restores it.
     SavePaneLayoutState();
 
-    // Show the capsule for this pane — positioned at the pane's base center.
+    // Show the capsule docked at this pane's fixed top-row slot.
     LayoutCapsuleForPane(paneIndex);
 
     // No current pane any more.
@@ -2199,6 +2240,7 @@ static void LoadPaneLayoutState(void)
             CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneClosed%d", index], NULL, CFSTR("zp.dashsplit"));
             gPaneZoom[index] = 1.0f;
             gPaneClosed[index] = NO;
+            gCapsuleDetached[index] = NO;
         }
         CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
         CLog(@"ui: selected apps changed (was %@, now %@) — layout reset", lastJoined, joined);
@@ -2323,55 +2365,18 @@ static void StandDownForUnlock(NSString *why)
     CLog(@"ui: stood down for unlock (%@)", why);
 }
 
-// 0.1.49: Show all capsules in a horizontal row at the top of the car screen.
-// Called when the phone locks (or CarPlay connects while locked) — gives the
+// 0.1.59: close every pane and dock all capsules in a fixed row at the top
+// of the car screen (locked state / CarPlay connect while locked) — gives the
 // user a row of app-name capsules to tap, opening each app on demand.
 static void ShowAllCapsules(void)
 {
     int count = PaneCount();
     if (!gWindow || count == 0) return;
 
-    // Layout capsules in a horizontal row centered on the car screen.
-    UIView *host = gWindow;
-    CGFloat screenWidth = host.bounds.size.width;
-    CGFloat capsuleH = 36;
-    CGFloat capsuleSpacing = 12;
-    CGFloat capsulePadding = 24;
-
-    // First pass: set titles and measure widths.
-    CGFloat totalWidth = 0;
-    CGFloat widths[MAX_PANES];
     for (int i = 0; i < count; i++) {
-        NSString *name = AppNameForSlot(i);
-        UIButton *cap = gCapsules[i];
-        if (!cap) { widths[i] = 0; continue; }
-        [cap setTitle:name forState:UIControlStateNormal];
-        [cap setTitle:name forState:UIControlStateHighlighted];
-        [cap sizeToFit];
-        CGFloat w = cap.frame.size.width + capsulePadding;
-        widths[i] = w;
-        totalWidth += w;
-        if (i < count - 1) totalWidth += capsuleSpacing;
-    }
-
-    // If all capsules fit in one row, center them. Otherwise wrap.
-    CGFloat startX = (screenWidth - totalWidth) / 2.0;
-    if (startX < 8) startX = 8;
-    CGFloat y = 8;  // top of screen
-
-    CGFloat x = startX;
-    for (int i = 0; i < count; i++) {
-        UIButton *cap = gCapsules[i];
-        if (!cap || widths[i] == 0) continue;
-        cap.frame = CGRectMake(x, y, widths[i], capsuleH);
-        cap.hidden = NO;
-        gPaneClosed[i] = YES;  // mark as closed so capsule is the active state
-        x += widths[i] + capsuleSpacing;
-
-        // Hide the corresponding pane.
+        gPaneClosed[i] = YES;   // every pane comes up as a capsule
         if (gPanes[i]) gPanes[i].hidden = YES;
         if (gPaneToolbars[i]) gPaneToolbars[i].hidden = YES;
-        // Stand down the slot.
         SlotSetMode(i, 0);
     }
 
@@ -2380,6 +2385,9 @@ static void ShowAllCapsules(void)
 
     // Hide lock hint label — capsules replace it.
     if (gLockHintLabel) gLockHintLabel.hidden = YES;
+
+    // Dock the row; capsules the user dragged away stay where they were put.
+    LayoutCapsuleRow();
 
     CLog(@"ui: capsule row shown (%d apps)", count);
 }
@@ -2509,12 +2517,13 @@ static void RestoreNow(void)
         if (gPaneClosed[index]) {
             // Slot was stood down to mode 0 by closeButtonTapped.
             // Don't restore to Live while the pane is hidden — just
-            // re-show the capsule so the user can restore it manually.
-            LayoutCapsuleForPane(index);
+            // re-show its capsule docked at the top-row slot.
             continue;
         }
         RestoreSlot(index);
     }
+    // One pass relayouts every closed pane's capsule at its fixed slot.
+    LayoutCapsuleRow();
     CLog(@"ui: overlay restored (%d panes, %d closed)", count, closedCount);
 }
 
@@ -3029,6 +3038,7 @@ UIColor *paneColor = [UIColor clearColor];
         [capsule addGestureRecognizer:capPan];
         [addTarget addSubview:capsule];
         gCapsules[index] = capsule;
+        gCapsuleDetached[index] = NO;   // 0.1.59: brand-new capsule starts docked
     }
     
 // Create divider lines — removed: panes are now draggable so
@@ -3211,8 +3221,9 @@ UIColor *paneColor = [UIColor clearColor];
             if (!gPaneClosed[index]) continue;
             if (gPanes[index]) gPanes[index].hidden = YES;
             if (gPaneToolbars[index]) gPaneToolbars[index].hidden = YES;
-            LayoutCapsuleForPane(index);
         }
+        // Dock the closed panes' capsules at their top-row slots.
+        LayoutCapsuleRow();
         if (gLockStateKnown && !gPhoneLocked) {
             // Unlocked: nothing is Live yet — hide the placeholders and let
             // the unlock listener show the capsule row; the lock will start.

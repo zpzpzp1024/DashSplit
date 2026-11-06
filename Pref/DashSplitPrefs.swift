@@ -15,7 +15,7 @@ private let keyTestLandscape = "TestLandscape"
 private let keyManualStart = "ManualStart"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.58"
+private let tweakVersion = "0.1.59"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 
@@ -41,13 +41,15 @@ private func boolPref(_ key: String, defaultValue: Bool) -> Bool {
 // MARK: - Selected apps (comma-separated bundle IDs)
 
 private func selectedAppIDs() -> [String] {
-    if let value = CFPreferencesCopyAppValue(keySelectedApps as CFString, prefsDomain) as? String, !value.isEmpty {
+    // 0.1.59: distinguish "never configured" (key absent → default 时钟+日历)
+    // from an explicitly cleared list (empty string → no apps). Unchecking
+    // every app must stay empty instead of snapping back to the defaults.
+    if let value = CFPreferencesCopyAppValue(keySelectedApps as CFString, prefsDomain) as? String {
         return value.components(separatedBy: ",").filter { !$0.isEmpty }
     }
-    if let value = loadPrefs()[keySelectedApps] as? String, !value.isEmpty {
+    if let value = loadPrefs()[keySelectedApps] as? String {
         return value.components(separatedBy: ",").filter { !$0.isEmpty }
     }
-    // Defaults: 时钟 + 日历
     return ["com.apple.mobiletimer", "com.apple.mobilecal"]
 }
 
@@ -181,12 +183,40 @@ private func installedApps() -> [[String: String]] {
         seen.insert(bundleID)
         apps.append(["name": name, "id": bundleID])
     }
-    apps.sort { ($0["name"] ?? "") < ($1["name"] ?? "") }
+    // 0.1.59: localized alphabetical order (English A–Z, Chinese by pinyin).
+    apps.sort { ($0["name"] ?? "").localizedStandardCompare($1["name"] ?? "") == .orderedAscending }
     return apps
 }
 
 private func appName(for bundleID: String, apps: [[String: String]]) -> String {
     apps.first(where: { $0["id"] == bundleID })?["name"] ?? bundleID
+}
+
+// 0.1.59: app icon for a bundle ID via LSApplicationProxy. Tries the
+// established iconDataForVariant: selector (requires NSInvocation because
+// its argument is a plain int); falls back to nil (text-only row).
+private func appIcon(for bundleID: String) -> UIImage? {
+    guard
+        let proxyClass = NSClassFromString("LSApplicationProxy") as? NSObject.Type,
+        let proxy = proxyClass.perform(NSSelectorFromString("applicationProxyForIdentifier:"), with: bundleID)?.takeUnretainedValue() as? NSObject
+    else { return nil }
+
+    let variant: Int32 = 2
+    let selector = NSSelectorFromString("iconDataForVariant:")
+    guard proxy.responds(to: selector),
+          let signature = proxy.methodSignature(for: selector)
+    else { return nil }
+
+    let invocation = NSInvocation.invocation(withMethodSignature: signature)
+    invocation.selector = selector
+    invocation.target = proxy
+    invocation.setArgument(&variant, at: 2)
+    invocation.invoke()
+
+    var result: AnyObject?
+    invocation.getReturnValue(&result)
+    guard let data = result as? Data, let icon = UIImage(data: data) else { return nil }
+    return icon
 }
 
 // MARK: - Multi-select app picker
@@ -224,6 +254,21 @@ class MultiAppPickerController: PSListController {
     @objc func reloadPicker() {
         setValue(nil, forKey: "_specifiers")
         perform(NSSelectorFromString("reloadSpecifiers"))
+    }
+
+    // 0.1.59: display each row's app icon (belt-and-suspenders alongside the
+    // specifier iconImage property — some cell types ignore that property).
+    override func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        super.tableView(tableView, willDisplay: cell, forRowAt: indexPath)
+        guard
+            let preferenceCell = cell as? PSTableCell,
+            let bid = preferenceCell.specifier?.property(forKey: "dashsplitBundleID") as? String,
+            let icon = appIcon(for: bid)
+        else { return }
+        cell.imageView?.image = icon
+        cell.imageView?.contentMode = .scaleAspectFit
+        cell.imageView?.layer.cornerRadius = 6
+        cell.imageView?.layer.masksToBounds = true
     }
 
     override var specifiers: NSMutableArray? {
@@ -272,6 +317,13 @@ class MultiAppPickerController: PSListController {
                         edit: nil
                     )
                     row?.buttonAction = #selector(MultiAppRowTarget.toggleApp)
+                    // 0.1.59: stash the bundle ID and let Preferences render the
+                    // icon via the standard iconImage property; willDisplayCell
+                    // below is a second fallback for the image view.
+                    row?.setProperty(bid, forKey: "dashsplitBundleID")
+                    if let icon = appIcon(for: bid) {
+                        row?.setProperty(icon, forKey: "iconImage")
+                    }
                     if let row = row { specifiers.add(row) }
                 }
             }
