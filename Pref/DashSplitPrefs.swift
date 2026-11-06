@@ -201,7 +201,7 @@ private func appIcon(for bundleID: String) -> UIImage? {
         let proxy = proxyClass.perform(NSSelectorFromString("applicationProxyForIdentifier:"), with: bundleID)?.takeUnretainedValue() as? NSObject
     else { return nil }
 
-    let variant: Int32 = 2
+    var variant: Int32 = 2
     let selector = NSSelectorFromString("iconDataForVariant:")
     guard proxy.responds(to: selector),
           let signature = proxy.methodSignature(for: selector)
