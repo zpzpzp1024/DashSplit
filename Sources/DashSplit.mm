@@ -331,27 +331,28 @@ static NSString *HostBundleIDForIndex(int index)
     return ids[index];
 }
 
-// Per-app ratio: integer 1-5 from AppRatio_<bundleID> pref. Default 1.
-static int AppRatioForIndex(int index)
-{
-    NSString *bid = HostBundleIDForIndex(index);
-    if (!bid.length) return 1;
-    NSString *key = [NSString stringWithFormat:@"AppRatio_%@", bid];
-    int r = (int)PrefInteger(key, 1);
-    if (r < 1) r = 1;
-    if (r > 5) r = 5;
-    return r;
-}
-
-// Per-app scale: integer 10-100 from AppScale_<bundleID> pref. Default 100.
-static CGFloat AppScaleForIndex(int index)
+// 0.1.62: single per-app "size" (AppSize_<bundleID>, 10-600, 100 = default
+// = 1/5 screen width). Returns the width factor = size/100. Legacy
+// AppRatio_ × AppScale_ values (1-5 × 10-100) are folded in as ratio × scale
+// when AppSize is absent, so existing users keep their layout sizes.
+static CGFloat AppSizeForIndex(int index)
 {
     NSString *bid = HostBundleIDForIndex(index);
     if (!bid.length) return 1.0f;
-    NSString *key = [NSString stringWithFormat:@"AppScale_%@", bid];
-    int raw = (int)PrefInteger(key, 100);
+    NSString *key = [NSString stringWithFormat:@"AppSize_%@", bid];
+    int raw = (int)PrefInteger(key, 0);
+    if (raw == 0) {
+        // Migration: old ratio (1-5) × scale (10-100) → size.
+        int ratio = (int)PrefInteger([NSString stringWithFormat:@"AppRatio_%@", bid], 1);
+        if (ratio < 1) ratio = 1;
+        if (ratio > 5) ratio = 5;
+        int scale = (int)PrefInteger([NSString stringWithFormat:@"AppScale_%@", bid], 100);
+        if (scale < 10) scale = 10;
+        if (scale > 100) scale = 100;
+        raw = ratio * scale;
+    }
     if (raw < 10) raw = 10;
-    if (raw > 100) raw = 100;
+    if (raw > 600) raw = 600;
     return (CGFloat)raw / 100.0f;
 }
 
@@ -2079,7 +2080,7 @@ static CGFloat PaneMaxZoom(int index)
     if (bounds.size.width <= 0) bounds.size.width = 1;
     if (bounds.size.height <= 0) bounds.size.height = 1;
     CGFloat baseUnit = floor(bounds.size.width / 5.0);
-    CGFloat rawW = MAX(AppRatioForIndex(index) * baseUnit * AppScaleForIndex(index), 60);
+    CGFloat rawW = MAX(baseUnit * AppSizeForIndex(index), 60);
     // 0.1.61: same phone-aspect sizing as Layout (no letterboxing, no overflow).
     CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
     CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
@@ -2293,15 +2294,15 @@ static void LoadPaneLayoutState(void)
             // to the default base frame. Convert it into an absolute center
             // anchor (using the restored zoom, same formula as old Layout).
             CGFloat zoom = [vZ isKindOfClass:[NSNumber class]] ? [(NSNumber *)vZ doubleValue] : 1.0f;
-            CGFloat ratio = AppRatioForIndex(index);
-            CGFloat scale = AppScaleForIndex(index);
+            // 0.1.62: single size factor replaces ratio × scale.
+            CGFloat factor = AppSizeForIndex(index);
             // 0.1.61: phone-aspect base sizing (same rule as Layout) so a
             // migrated center matches the new no-letterbox pane shape.
             CGFloat aspectW = [UIScreen mainScreen].bounds.size.width;
             CGFloat aspectH = [UIScreen mainScreen].bounds.size.height;
             if (aspectW <= 0) aspectW = 1;
             CGFloat paneAspect = aspectH / aspectW;
-            CGFloat w0 = MAX(ratio * baseUnit * scale, 60);
+            CGFloat w0 = MAX(baseUnit * factor, 60);
             CGFloat h0 = w0 * paneAspect;
             if (h0 > h) { h0 = h; w0 = h0 / paneAspect; }
             w0 *= zoom;
@@ -2767,10 +2768,9 @@ static void Layout(void)
 
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
-            int ratio = AppRatioForIndex(index);
-            CGFloat scale = AppScaleForIndex(index);
-            // Fixed width: ratio * baseUnit, then apply scale, then user zoom.
-            CGFloat baseW = MAX(ratio * baseUnit * scale, 60);
+            CGFloat factor = AppSizeForIndex(index);
+            // Fixed width: baseUnit × size factor, then user zoom (0.1.62).
+            CGFloat baseW = MAX(baseUnit * factor, 60);
             CGFloat baseH = baseW * paneAspect;
             if (baseH > bounds.size.height) {
                 baseH = bounds.size.height;
@@ -2801,9 +2801,9 @@ static void Layout(void)
             }
 
             gPanes[index].frame = baseFrame;
-            CLog(@"layout: pane[%d] frame=%@ ratio=%d scale=%.2f zoom=%.2f center={%.0f,%.0f}", index,
-                 NSStringFromCGRect(gPanes[index].frame), ratio,
-                 scale, gPaneZoom[index], anchor.x, anchor.y);
+            CLog(@"layout: pane[%d] frame=%@ size=%.0f%% zoom=%.2f center={%.0f,%.0f}", index,
+                 NSStringFromCGRect(gPanes[index].frame), factor * 100.0,
+                 gPaneZoom[index], anchor.x, anchor.y);
         }
     }
     
@@ -2980,7 +2980,7 @@ static void CreateInterface(BOOL testMode)
         gPaneZoom[i] = 1.0f;
         gPaneClosed[i] = NO;
         if (i < count) {
-            CGFloat w0 = MAX(AppRatioForIndex(i) * unitW * AppScaleForIndex(i), 60);
+            CGFloat w0 = MAX(unitW * AppSizeForIndex(i), 60);
             gPaneCenters[i] = CGPointMake(margin + i * (w0 + 12) + w0 / 2.0, hostH / 2.0);
         } else {
             gPaneCenters[i] = CGPointZero;
@@ -3531,7 +3531,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.61 loaded ---");
+        CLog(@"--- DashSplit 0.1.62 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

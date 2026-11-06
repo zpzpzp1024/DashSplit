@@ -15,7 +15,7 @@ private let keyTestLandscape = "TestLandscape"
 private let keyManualStart = "ManualStart"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.61"
+private let tweakVersion = "0.1.62"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 
@@ -67,23 +67,57 @@ private func toggleAppSelected(_ bundleID: String) {
     setSelectedAppIDs(ids)
 }
 
-// MARK: - Per-app ratio and scale keys
+// MARK: - Per-app size (0.1.62: one slider replaces AppRatio × AppScale)
 
+private func sizeKey(_ bundleID: String) -> String { "AppSize_\(bundleID)" }
+// Legacy keys from before 0.1.62 — folded into AppSize once on migration.
 private func ratioKey(_ bundleID: String) -> String { "AppRatio_\(bundleID)" }
 private func scaleKey(_ bundleID: String) -> String { "AppScale_\(bundleID)" }
 
-private func appRatio(_ bundleID: String) -> Int {
-    if let value = CFPreferencesCopyAppValue(ratioKey(bundleID) as CFString, prefsDomain) as? Int, value > 0 {
-        return value
-    }
-    return 1
+// 0.1.62: migrate the old AppRatio (1-5) × AppScale (10-100) into the single
+// AppSize value (10-600, 100 = default width = 1/5 screen). Runs once per app
+// when AppSize is absent and any legacy key exists, so the Settings slider
+// shows the same value the tweak actually uses.
+private func migrateSizeIfNeeded(_ bundleID: String) {
+    let sizeExists =
+        (CFPreferencesCopyAppValue(sizeKey(bundleID) as CFString, prefsDomain) != nil) ||
+        (loadPrefs()[sizeKey(bundleID)] != nil)
+    if sizeExists { return }
+
+    let ratioExists =
+        (CFPreferencesCopyAppValue(ratioKey(bundleID) as CFString, prefsDomain) != nil) ||
+        (loadPrefs()[ratioKey(bundleID)] != nil)
+    let scaleExists =
+        (CFPreferencesCopyAppValue(scaleKey(bundleID) as CFString, prefsDomain) != nil) ||
+        (loadPrefs()[scaleKey(bundleID)] != nil)
+    if !ratioExists && !scaleExists { return }   // untouched → default 100
+
+    let ratio = min(max(
+        (CFPreferencesCopyAppValue(ratioKey(bundleID) as CFString, prefsDomain) as? Int)
+        ?? (loadPrefs()[ratioKey(bundleID)] as? Int) ?? 1, 1), 5)
+    let scale = min(max(
+        (CFPreferencesCopyAppValue(scaleKey(bundleID) as CFString, prefsDomain) as? Int)
+        ?? (loadPrefs()[scaleKey(bundleID)] as? Int) ?? 100, 10), 100)
+    let size = min(max(10, ratio * scale), 600)
+    setPref(size, forKey: sizeKey(bundleID))
+    NSLog("[DashSplitPref] migrated size %@ = %d (ratio %d × scale %d)", bundleID, size, ratio, scale)
 }
 
-private func appScale(_ bundleID: String) -> Int {
-    if let value = CFPreferencesCopyAppValue(scaleKey(bundleID) as CFString, prefsDomain) as? Int, value >= 10 {
-        return value
+private func appSize(_ bundleID: String) -> Int {
+    if let value = CFPreferencesCopyAppValue(sizeKey(bundleID) as CFString, prefsDomain) as? Int, value >= 10 {
+        return min(value, 600)
     }
-    return 100
+    if let value = loadPrefs()[sizeKey(bundleID)] as? Int, value >= 10 {
+        return min(value, 600)
+    }
+    // Fallback: legacy ratio × scale folded in (read-only, same rule as the tweak).
+    let ratio = min(max(
+        (CFPreferencesCopyAppValue(ratioKey(bundleID) as CFString, prefsDomain) as? Int)
+        ?? (loadPrefs()[ratioKey(bundleID)] as? Int) ?? 1, 1), 5)
+    let scale = min(max(
+        (CFPreferencesCopyAppValue(scaleKey(bundleID) as CFString, prefsDomain) as? Int)
+        ?? (loadPrefs()[scaleKey(bundleID)] as? Int) ?? 100, 10), 100)
+    return min(max(10, ratio * scale), 600)
 }
 
 // MARK: - Fit mode
@@ -545,24 +579,22 @@ final class DashSplitPrefListController: PSListController {
             if !selected.isEmpty {
                 SpecifierFactory.add([
                     GroupCell(
-                        name: "应用占比与缩放",
-                        footerText: "每个App独立设置。\n占比:1-5,控制窗口固定宽度(1=1/5屏宽,5=满屏宽)。\n缩放:10-100,等比缩小窗口。\n多App会叠放,可拖拽调整位置。"
+                        name: "应用大小",
+                        footerText: "每个App独立设置。\n大小:10-600,100=默认宽度(1/5屏宽)。\n多App会叠放,可拖拽调整位置。"
                     )
                 ], to: &specifiers, in: self)
 
                 for bid in selected {
+                    // 0.1.62: fold legacy AppRatio×AppScale into AppSize once.
+                    migrateSizeIfNeeded(bid)
                     let name = appName(for: bid, apps: apps)
                     // Each app gets its own group header for clarity.
                     SpecifierFactory.add([
                         GroupCell(name: name, footerText: "")
                     ], to: &specifiers, in: self)
-                    // Ratio slider
+                    // 0.1.62: single continuous size slider (10-600; 100=default).
                     SpecifierFactory.add([
-                        SliderCell(name: "占比", key: ratioKey(bid), defaultValue: 1, range: 1..<6)
-                    ], to: &specifiers, in: self)
-                    // Scale slider
-                    SpecifierFactory.add([
-                        SliderCell(name: "缩放", key: scaleKey(bid), defaultValue: 100, range: 10..<101)
+                        SliderCell(name: "大小", key: sizeKey(bid), defaultValue: 100, range: 10..<601)
                     ], to: &specifiers, in: self)
                 }
             }
