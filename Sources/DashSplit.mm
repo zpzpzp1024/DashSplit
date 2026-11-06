@@ -1732,7 +1732,15 @@ static void LayoutToolbarForPane(int index)
     CGRect bf = gPaneBaseFrames[index];
     CGFloat tbBtnH = 40;
     CGFloat tbH = tbBtnH * 2 + 6 + 8;   // two buttons + gap + padding
-    tb.frame = CGRectMake(CGRectGetMaxX(bf) + 3,
+    // Default: just outside the pane's RIGHT edge.
+    CGFloat x = CGRectGetMaxX(bf) + 3;
+    UIView *host = tb.superview;
+    if (host && CGRectGetMaxX(bf) + 3 + TOOLBAR_WIDTH > host.bounds.size.width) {
+        // 0.1.61: pane zoomed beyond the right edge — mirror the toolbar to
+        // the pane's LEFT outside edge so the handle/close stay usable.
+        x = CGRectGetMinX(bf) - 3 - TOOLBAR_WIDTH;
+    }
+    tb.frame = CGRectMake(x,
                           CGRectGetMidY(bf) - tbH / 2.0,
                           TOOLBAR_WIDTH, tbH);
     if (gDragHandles[index]) {
@@ -2072,7 +2080,13 @@ static CGFloat PaneMaxZoom(int index)
     if (bounds.size.height <= 0) bounds.size.height = 1;
     CGFloat baseUnit = floor(bounds.size.width / 5.0);
     CGFloat rawW = MAX(AppRatioForIndex(index) * baseUnit * AppScaleForIndex(index), 60);
-    CGFloat rawH = MAX(bounds.size.height * AppScaleForIndex(index), 60);
+    // 0.1.61: same phone-aspect sizing as Layout (no letterboxing, no overflow).
+    CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
+    CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
+    if (phoneW <= 0) phoneW = 1;
+    CGFloat paneAspect = phoneH / phoneW;
+    CGFloat rawH = rawW * paneAspect;
+    if (rawH > bounds.size.height) { rawH = bounds.size.height; rawW = rawH / paneAspect; }
     CGFloat need = MAX(bounds.size.width / rawW, bounds.size.height / rawH);
     CGFloat maxZ = ceil(need * 1.2);  // 20% overflow so "max" always overshoots
     if (maxZ < 4.0) maxZ = 4.0;
@@ -2281,8 +2295,19 @@ static void LoadPaneLayoutState(void)
             CGFloat zoom = [vZ isKindOfClass:[NSNumber class]] ? [(NSNumber *)vZ doubleValue] : 1.0f;
             CGFloat ratio = AppRatioForIndex(index);
             CGFloat scale = AppScaleForIndex(index);
-            CGFloat w0 = MAX(ratio * baseUnit * scale * zoom, 60);
-            CGFloat h0 = MAX(paneHeight * scale * zoom, 60);
+            // 0.1.61: phone-aspect base sizing (same rule as Layout) so a
+            // migrated center matches the new no-letterbox pane shape.
+            CGFloat aspectW = [UIScreen mainScreen].bounds.size.width;
+            CGFloat aspectH = [UIScreen mainScreen].bounds.size.height;
+            if (aspectW <= 0) aspectW = 1;
+            CGFloat paneAspect = aspectH / aspectW;
+            CGFloat w0 = MAX(ratio * baseUnit * scale, 60);
+            CGFloat h0 = w0 * paneAspect;
+            if (h0 > h) { h0 = h; w0 = h0 / paneAspect; }
+            w0 *= zoom;
+            h0 *= zoom;
+            if (w0 < 60) w0 = 60;
+            if (h0 < 60) h0 = 60;
             CGFloat baseX = sideMargin + index * (w0 + 12);
             CGFloat baseY = (paneHeight - h0) / 2.0;
             CGFloat ox = PrefDouble([NSString stringWithFormat:@"PaneOffsetX%d", index], 0) * w;
@@ -2731,16 +2756,28 @@ static void Layout(void)
     // the user drags them apart manually. Scale still applies per-app.
     // Base unit: screen width / 5 (so ratio=5 fills the screen width).
     CGFloat baseUnit = floor(bounds.size.width / 5.0);
-    CGFloat paneHeight = bounds.size.height;  // full height
+    // 0.1.61: panes keep the PHONE screen aspect ratio so aspect-fit content
+    // fills the pane exactly — no top/bottom letterboxing. Height derives
+    // from width; if that would exceed the host, scale down keeping the ratio
+    // (so panes never overflow in landscape CarPlay).
+    CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
+    CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
+    if (phoneW <= 0) phoneW = 1;
+    CGFloat paneAspect = phoneH / phoneW;   // height / width of the phone screen
 
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
             int ratio = AppRatioForIndex(index);
             CGFloat scale = AppScaleForIndex(index);
             // Fixed width: ratio * baseUnit, then apply scale, then user zoom.
-            CGFloat rawW = ratio * baseUnit;
-            CGFloat scaledW = floor(rawW * scale * gPaneZoom[index]);
-            CGFloat scaledH = floor(paneHeight * scale * gPaneZoom[index]);
+            CGFloat baseW = MAX(ratio * baseUnit * scale, 60);
+            CGFloat baseH = baseW * paneAspect;
+            if (baseH > bounds.size.height) {
+                baseH = bounds.size.height;
+                baseW = baseH / paneAspect;
+            }
+            CGFloat scaledW = floor(baseW * gPaneZoom[index]);
+            CGFloat scaledH = floor(baseH * gPaneZoom[index]);
             // Guard against zero-size panes (extreme zoom-out).
             if (scaledW < 60) scaledW = 60;
             if (scaledH < 60) scaledH = 60;
@@ -3494,7 +3531,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.60 loaded ---");
+        CLog(@"--- DashSplit 0.1.61 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
