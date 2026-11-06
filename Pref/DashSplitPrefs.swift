@@ -6,6 +6,7 @@
 
 import Preferences
 import UIKit
+import ObjectiveC
 
 private let prefsFile = "/var/mobile/Library/Preferences/zp.dashsplit.plist"
 private let keyEnabled = "Enabled"
@@ -192,31 +193,34 @@ private func appName(for bundleID: String, apps: [[String: String]]) -> String {
     apps.first(where: { $0["id"] == bundleID })?["name"] ?? bundleID
 }
 
-// 0.1.59: app icon for a bundle ID via LSApplicationProxy. Tries the
-// established iconDataForVariant: selector (requires NSInvocation because
-// its argument is a plain int); falls back to nil (text-only row).
+// 0.1.59: app icon for a bundle ID. First tries the id-argument
+// LSApplicationWorkspace.iconForApplication: (usable via perform); falls back
+// to LSApplicationProxy.iconDataForVariant: whose plain-int argument requires
+// an objc_msgSend call with an explicit C signature.
 private func appIcon(for bundleID: String) -> UIImage? {
+    // Fast path: iconForApplication: takes an object → perform works.
+    if let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type,
+       workspaceClass.responds(to: NSSelectorFromString("defaultWorkspace")),
+       let workspace = workspaceClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject,
+       workspace.responds(to: NSSelectorFromString("iconForApplication:")),
+       let icon = workspace.perform(NSSelectorFromString("iconForApplication:"), with: bundleID)?.takeUnretainedValue() as? UIImage {
+        return icon
+    }
+
+    // Fallback: iconDataForVariant: takes a plain int → objc_msgSend.
     guard
         let proxyClass = NSClassFromString("LSApplicationProxy") as? NSObject.Type,
         let proxy = proxyClass.perform(NSSelectorFromString("applicationProxyForIdentifier:"), with: bundleID)?.takeUnretainedValue() as? NSObject
     else { return nil }
 
-    var variant: Int32 = 2
     let selector = NSSelectorFromString("iconDataForVariant:")
-    guard proxy.responds(to: selector),
-          let signature = proxy.methodSignature(for: selector)
-    else { return nil }
+    guard proxy.responds(to: selector) else { return nil }
 
-    let invocation = NSInvocation.invocation(withMethodSignature: signature)
-    invocation.selector = selector
-    invocation.target = proxy
-    invocation.setArgument(&variant, at: 2)
-    invocation.invoke()
-
-    var result: AnyObject?
-    invocation.getReturnValue(&result)
-    guard let data = result as? Data, let icon = UIImage(data: data) else { return nil }
-    return icon
+    typealias IconDataFunction = @convention(c) (AnyObject, Selector, Int32) -> Unmanaged<AnyObject>?
+    let call = unsafeBitCast(objc_msgSend, to: IconDataFunction.self)
+    guard let unmanaged = call(proxy, selector, 2) else { return nil }
+    let data = unmanaged.takeUnretainedValue() as? Data
+    return data.flatMap(UIImage.init)
 }
 
 // MARK: - Multi-select app picker
