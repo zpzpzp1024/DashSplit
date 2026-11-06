@@ -110,6 +110,9 @@
 // Maximum number of panes (apps) supported simultaneously.
 #define MAX_PANES 8
 
+// 0.1.58: width of the per-pane external right toolbar (outside the pane).
+#define TOOLBAR_WIDTH 38
+
 static NSString *const kPrefsHostApps = @"SelectedApps";  // comma-separated bundle IDs
 static NSString *const kPrefsLastSelectedApps = @"LastSelectedApps"; // layout-reset sentinel
 static NSString *const kPrefsEnabled  = @"Enabled";
@@ -118,6 +121,9 @@ static NSString *const kPrefsTestLandscape = @"TestLandscape";
 static NSString *const kPrefsStretchFill = @"StretchFill";
 // Fit mode: 0 = aspect-fit (default), 1 = stretch fill
 static NSString *const kPrefsFitMode = @"FitMode";
+// 0.1.58: manual-start gate — when ON, car mode shows only a start button on
+// connect and hosting begins on the user's tap (instead of auto-starting).
+static NSString *const kPrefsManualStart = @"ManualStart";
 
 #pragma mark - Logging
 
@@ -388,7 +394,7 @@ static void LogPrefsState(void)
          TestModeEnabled(),
          SelectedBundleIDs());
 
-    CLog(@"prefs: fitMode=%d", FitMode());
+    CLog(@"prefs: fitMode=%d manualStart=%d", FitMode(), PrefBool(kPrefsManualStart, NO));
 }
 
 #pragma mark - Runtime helpers
@@ -627,6 +633,13 @@ static BOOL gAwaitingStart = NO;     // car mode: button shown, hosting not begu
 static BOOL gPendingStart = NO;      // tapped during settle window; host when it passes
 static double gConnectAt = 0;        // CFAbsoluteTime of (re)connect; 0 = never
 static BOOL gAutoStartOnCreate = NO; // rebuild path: interface was live, host at once
+// 0.1.58: car-mode connect handling.
+// auto mode waits out the CarPlay setup wave before hosting (kills the
+// "show -> disappear -> reappear" flicker); manual mode waits for the user.
+static const double AUTO_START_DELAY_SECONDS = 8.0;
+static BOOL gManualAwaitingStart = NO; // manual mode: only the start button shown, hosting not begun
+static BOOL gAutoStartArmed = NO;      // auto mode: connect settle window in progress
+static double gAutoStartAt = 0;        // CFAbsoluteTime when the settle window ends
 
 // 0.1.28 never-Live-while-unlocked policy. The 0.1.27 log shows all three
 // resprings came from ENTERING Live at an unsafe moment, never from the
@@ -1279,8 +1292,12 @@ static int gCurrentPane = -1;   // -1 = no pane selected
 
 // 0.1.57: per-pane controls — drag handle on top, close × below, pinned to
 // each pane's right edge (laid out in Layout so they move & scale with it).
+// 0.1.58: both are no longer subviews of the pane — they live in an external
+// right-side toolbar (gPaneToolbars, a sibling of the pane) so they never
+// cover app content and can't be eaten by the hosted remote view.
 static UIView *gDragHandles[MAX_PANES];
 static UIButton *gCloseButtons[MAX_PANES];
+static UIView *gPaneToolbars[MAX_PANES];
 
 // Drag session state for long-press pane dragging.
 static CGPoint gDragStartCenter = CGPointZero;
@@ -1550,6 +1567,11 @@ static void TeardownAllHosts(void)
     gAwaitingStart = NO;
     gPendingStart = NO;
     gPendingShow = 0;
+    // 0.1.58: clear the manual/auto connect-gate state so a clean reconnect
+    // re-evaluates the prefs from scratch.
+    gManualAwaitingStart = NO;
+    gAutoStartArmed = NO;
+    gAutoStartAt = 0;
     // Re-assert after teardown: FitAppViewToContainer calls during invalidate
     // may have re-enabled it.
     gNativeFillActive = NO;
@@ -1567,6 +1589,10 @@ static BOOL gTestMode;
 static BOOL gTestLandscape;  // tracks the TestLandscape pref of the active test interface
 static UILabel *gLockHintLabel;  // "请锁屏手机后显示" banner shown when panes hidden
 static UIButton *gToggleButton;
+// 0.1.58: manual-start button (car mode, ManualStart ON) + transient toast
+// label (visible feedback when a capsule restore / manual start is deferred).
+static UIButton *gStartButton;
+static UILabel *gToastLabel;
 static int gCurrentPaneCount = 0;  // pane count of the currently active interface
 
 // Per-pane drag offsets (delta from the Layout-assigned position).
@@ -1600,6 +1626,7 @@ static BOOL gPaneClosed[MAX_PANES];
 - (void)zoomSliderChanged:(UISlider *)slider;
 - (void)resetZoomTapped:(UIButton *)sender;
 - (void)closeButtonTapped:(UIButton *)sender;
+- (void)startButtonTapped:(UIButton *)sender;
 @end
 
 // Forward declaration — TeardownSlot is defined later in the file.
@@ -1608,6 +1635,7 @@ static void RestoreSlot(int index);
 static void Layout(void);
 static void SavePaneLayoutState(void);
 static void LoadPaneLayoutState(void);
+static void RestoreNow(void);
 
 // Position and reveal the capsule for a closed pane at the pane's base-frame
 // center (clamped to the parent). Shared by closeButtonTapped and the
@@ -1653,6 +1681,63 @@ static void LayoutCapsuleForPane(int index)
     capsule.hidden = NO;
 }
 
+// 0.1.58: position one pane's external toolbar from the pane's current base
+// frame (right outside the right edge, vertically centered). Shared by Layout
+// and the drag handlers so the toolbar follows the pane while it moves.
+static void LayoutToolbarForPane(int index)
+{
+    UIView *tb = gPaneToolbars[index];
+    if (!tb) return;
+    CGRect bf = gPaneBaseFrames[index];
+    CGFloat tbBtnH = 40;
+    CGFloat tbH = tbBtnH * 2 + 6 + 8;   // two buttons + gap + padding
+    tb.frame = CGRectMake(CGRectGetMaxX(bf) + 3,
+                          CGRectGetMidY(bf) - tbH / 2.0,
+                          TOOLBAR_WIDTH, tbH);
+    if (gDragHandles[index]) {
+        gDragHandles[index].frame = CGRectMake(3, 4, TOOLBAR_WIDTH - 6, tbBtnH);
+    }
+    if (gCloseButtons[index]) {
+        gCloseButtons[index].frame = CGRectMake(3, 4 + tbBtnH + 6, TOOLBAR_WIDTH - 6, tbBtnH);
+    }
+    tb.hidden = gPaneClosed[index];
+    [tb.superview bringSubviewToFront:tb];
+}
+
+// 0.1.58: transient toast at the top of the overlay — visible feedback when a
+// user action (capsule restore / manual start) is deferred by the
+// never-Live-while-unlocked policy, so it never looks like "nothing happened".
+static void ShowToast(NSString *text)
+{
+    if (!gWindow) return;
+    if (!gToastLabel) {
+        gToastLabel = [[UILabel alloc] initWithFrame:CGRectZero];
+        gToastLabel.numberOfLines = 0;
+        gToastLabel.textAlignment = NSTextAlignmentCenter;
+        gToastLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+        gToastLabel.textColor = [UIColor whiteColor];
+        gToastLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.65];
+        gToastLabel.layer.cornerRadius = 8;
+        gToastLabel.clipsToBounds = YES;
+        gToastLabel.userInteractionEnabled = NO;
+        gToastLabel.layer.zPosition = 10000;
+        gToastLabel.hidden = YES;
+        [gWindow addSubview:gToastLabel];
+    }
+    gToastLabel.text = text;
+    [gToastLabel sizeToFit];
+    CGRect f = gToastLabel.frame;
+    f.size.width += 28;
+    f.size.height += 16;
+    f.origin.x = floor((gWindow.bounds.size.width - f.size.width) / 2.0);
+    f.origin.y = 76;
+    gToastLabel.frame = f;
+    gToastLabel.hidden = NO;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        gToastLabel.hidden = YES;
+    });
+}
+
 @implementation DashSplitDragHandler
 
 // 0.1.55: panes are dragged by long-pressing anywhere on them (0.3 s). The
@@ -1696,6 +1781,7 @@ static void LayoutCapsuleForPane(int index)
 
         thePane.center = gPaneCenters[paneIndex];
         gPaneBaseFrames[paneIndex] = thePane.frame;
+        LayoutToolbarForPane(paneIndex);
     } else if (gesture.state == UIGestureRecognizerStateEnded ||
                gesture.state == UIGestureRecognizerStateCancelled) {
         SavePaneLayoutState();
@@ -1755,6 +1841,7 @@ static void LayoutCapsuleForPane(int index)
 
         thePane.center = gPaneCenters[paneIndex];
         gPaneBaseFrames[paneIndex] = thePane.frame;
+        LayoutToolbarForPane(paneIndex);
     } else if (gesture.state == UIGestureRecognizerStateEnded ||
                gesture.state == UIGestureRecognizerStateCancelled) {
         SavePaneLayoutState();
@@ -1834,6 +1921,7 @@ static NSString *AppNameForSlot(int paneIndex)
     // lets the user restore it later.
     UIView *pane = gPanes[paneIndex];
     if (pane) pane.hidden = YES;
+    if (gPaneToolbars[paneIndex]) gPaneToolbars[paneIndex].hidden = YES;
     gPaneClosed[paneIndex] = YES;
 
     // Stand the controller down from Live (safe, crash-proof).
@@ -1867,9 +1955,11 @@ static NSString *AppNameForSlot(int paneIndex)
         CLog(@"restore: pane[%d] deferred — phone unlocked", paneIndex);
         // Keep the pane hidden (avoid a black box) and the capsule visible;
         // the restore runs on the next lock (see gPendingRestoreIndex).
+        // 0.1.58: visible feedback so the defer never looks like a dead tap.
         gPendingRestoreIndex = paneIndex;
         gPaneClosed[paneIndex] = YES;
         SavePaneLayoutState();
+        ShowToast(@"手机解锁中，锁屏后恢复");
         return;
     }
 
@@ -1879,6 +1969,7 @@ static NSString *AppNameForSlot(int paneIndex)
     // Show the pane.
     UIView *pane = gPanes[paneIndex];
     if (pane) pane.hidden = NO;
+    if (gPaneToolbars[paneIndex]) gPaneToolbars[paneIndex].hidden = NO;
     gPaneClosed[paneIndex] = NO;
     SavePaneLayoutState();
 
@@ -1888,6 +1979,24 @@ static NSString *AppNameForSlot(int paneIndex)
     // The restored pane becomes the current pane so the controls strip is
     // immediately usable.
     SelectPane(paneIndex);
+}
+
+// 0.1.58: manual-start gate — tap begins hosting all panes (respecting the
+// never-Live-while-unlocked policy: if the phone is unlocked the request is
+// remembered and runs on the next lock, with a toast so the tap never looks
+// dead).
+- (void)startButtonTapped:(UIButton *)sender
+{
+    CLog(@"ui: manual start tapped");
+    gManualAwaitingStart = NO;
+    if (gStartButton) gStartButton.hidden = YES;
+    if (gLockStateKnown && !gPhoneLocked) {
+        gPendingShow = 2;
+        ShowToast(@"手机解锁中，锁屏后恢复");
+        CLog(@"ui: manual start deferred — phone unlocked");
+        return;
+    }
+    RestoreNow();
 }
 
 @end
@@ -2184,6 +2293,7 @@ static void HidePanesAndStandDown(NSString *why)
 for (int index = 0; index < count; index++) {
 if (gPanes[index]) gPanes[index].hidden = YES;
 if (gCapsules[index]) gCapsules[index].hidden = YES;
+if (gPaneToolbars[index]) gPaneToolbars[index].hidden = YES;
 }
 for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
 SetToggleGlyph(@"⟳");
@@ -2204,6 +2314,7 @@ static void StandDownForUnlock(NSString *why)
     gNativeFillActive = NO;
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) gPanes[index].hidden = YES;
+        if (gPaneToolbars[index]) gPaneToolbars[index].hidden = YES;
     }
     for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
     for (int index = 0; index < count; index++) {
@@ -2259,6 +2370,7 @@ static void ShowAllCapsules(void)
 
         // Hide the corresponding pane.
         if (gPanes[i]) gPanes[i].hidden = YES;
+        if (gPaneToolbars[i]) gPaneToolbars[i].hidden = YES;
         // Stand down the slot.
         SlotSetMode(i, 0);
     }
@@ -2345,9 +2457,11 @@ static void ShowPanes(void)
         // they stay hidden with their capsule visible.
         if (gPaneClosed[index]) {
             if (gPanes[index]) gPanes[index].hidden = YES;
+            if (gPaneToolbars[index]) gPaneToolbars[index].hidden = YES;
             continue;
         }
         if (gPanes[index]) gPanes[index].hidden = NO;
+        if (gPaneToolbars[index]) gPaneToolbars[index].hidden = NO;
     }
     for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = NO;
     if (gLockHintLabel) gLockHintLabel.hidden = YES;
@@ -2381,10 +2495,12 @@ static void RestoreNow(void)
         // they stay hidden with their capsule visible.
         if (gPaneClosed[index]) {
             if (gPanes[index]) gPanes[index].hidden = YES;
+            if (gPaneToolbars[index]) gPaneToolbars[index].hidden = YES;
             closedCount++;
             continue;
         }
         if (gPanes[index]) gPanes[index].hidden = NO;
+        if (gPaneToolbars[index]) gPaneToolbars[index].hidden = NO;
     }
     for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = NO;
     if (gLockHintLabel) gLockHintLabel.hidden = YES;
@@ -2421,11 +2537,13 @@ static void RestoreNow(void)
         TeardownAllHosts();
         gWindow.hidden = YES;
         gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
+gStartButton = nil;
+gToastLabel = nil;
 [gControlStrip removeFromSuperview];
 gControlStrip = nil;
 gControlLabel = nil;
@@ -2492,6 +2610,9 @@ static void HandleLockStateChanged(int token)
     gPhoneLocked = (locked != 0);
     if (gPhoneLocked) {
         CLog(@"lock: phone locked — leaving the split view as-is");
+        // 0.1.58: while the manual-start gate is waiting, the interface has
+        // nothing hosted and nothing to restore — just wait for the tap.
+        if (gManualAwaitingStart) return;
         // 0.1.28: a start/restore the user requested while the phone was
         // unlocked is now safe to run (never-Live-while-unlocked policy).
         // 0.1.53: a capsule restore deferred while unlocked (gPendingRestoreIndex).
@@ -2502,6 +2623,7 @@ static void HandleLockStateChanged(int token)
                 CLog(@"lock: running deferred capsule restore for pane[%d]", idx);
                 if (gCapsules[idx]) gCapsules[idx].hidden = YES;
                 gPanes[idx].hidden = NO;
+                if (gPaneToolbars[idx]) gPaneToolbars[idx].hidden = NO;
                 gPaneClosed[idx] = NO;
                 SavePaneLayoutState();
                 RestoreSlot(idx);
@@ -2531,7 +2653,11 @@ static void HandleLockStateChanged(int token)
         CLog(@"lock: capsule row shown on unlock (was deferred from connect)");
         return;
     }
-    
+
+    // 0.1.58: manual-start gate waiting — nothing hosted yet, nothing to
+    // stand down; the layout stays hidden behind the start button.
+    if (gManualAwaitingStart) return;
+
     // Already hidden (manually or by a previous unlock) or not on the car
     // display — nothing to stand down. Phone test mode never reacts to
     // unlock: it lives on the phone screen and is for debugging only.
@@ -2635,23 +2761,13 @@ static void Layout(void)
         }
     }
     
-    // 0.1.57: per-pane drag handle + close ×, stacked vertically, centered
-    // on each pane's right edge (inside the pane, so they move & scale with
-    // it and never cover app content elsewhere).
+    // 0.1.58: per-pane external toolbars — a sibling of each pane (never a
+    // subview), tucked just outside the pane's right edge so no app pixel is
+    // covered. Vertically stacked: drag handle on top, close × below.
+    // Positioned from the base frame (computed above for closed panes too),
+    // so the toolbar stays correct even while the pane itself is hidden.
     for (int index = 0; index < count; index++) {
-        UIView *pn = gPanes[index];
-        if (!pn || !gDragHandles[index]) continue;
-        CGRect b = pn.bounds;
-        CGFloat edgeW = 26;
-        CGFloat btnH = 40;
-        CGFloat hx = b.size.width - edgeW - 4;
-        CGFloat topY = MAX(floor((b.size.height - (btnH * 2 + 6)) / 2.0), 2);
-        gDragHandles[index].frame = CGRectMake(hx, topY, edgeW, btnH);
-        if (gCloseButtons[index]) {
-            gCloseButtons[index].frame = CGRectMake(hx, topY + btnH + 6, edgeW, btnH);
-        }
-        [pn bringSubviewToFront:gDragHandles[index]];
-        if (gCloseButtons[index]) [pn bringSubviewToFront:gCloseButtons[index]];
+        LayoutToolbarForPane(index);
     }
 
     // Toggle button removed from layout for car mode — no longer created.
@@ -2660,6 +2776,13 @@ static void Layout(void)
         UIView *toggleHost = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
         gToggleButton.frame = CGRectMake(8, 8, 48, 48);
         [toggleHost bringSubviewToFront:gToggleButton];
+    }
+
+    // 0.1.58: manual-start button, centered on the host.
+    if (gStartButton && !gStartButton.hidden) {
+        gStartButton.center = CGPointMake(host.bounds.size.width / 2.0,
+                                          host.bounds.size.height / 2.0);
+        [host bringSubviewToFront:gStartButton];
     }
     
     // 0.1.55: single controls strip pinned to the right edge of the screen.
@@ -2837,45 +2960,53 @@ UIColor *paneColor = [UIColor clearColor];
         // Single taps are never intercepted — they go to the hosted app.
         AttachPaneDragGesture(gPanes[index]);
 
-        // 0.1.57: per-pane controls — drag handle on top, close × below,
-        // pinned to the pane's right edge. Frames are set by Layout so they
-        // stay put while the pane moves/scales. The pan gesture on the
-        // handle drags the pane (tag = pane index).
-        CGFloat edgeW = 26;
-        CGFloat btnH = 40;
-        UIView *dragHandle = [[UIView alloc] initWithFrame:CGRectMake(0, 0, edgeW, btnH)];
-        dragHandle.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.35];
+        // 0.1.58: per-pane external toolbar — a sibling of the pane (added to
+        // addTarget, NOT to the pane), tucked outside the pane's right edge so
+        // it never covers app content and can't be swallowed by the hosted
+        // remote view. Vertically stacked: drag handle on top, close × below.
+        // Frames are set by Layout (tag = pane index).
+        CGFloat tbBtnH = 40;
+        UIView *toolbar = [[UIView alloc] initWithFrame:CGRectZero];
+        toolbar.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
+        toolbar.layer.cornerRadius = 6;
+        toolbar.userInteractionEnabled = YES;
+        toolbar.layer.zPosition = 9999;
+        toolbar.tag = index;
+
+        UIView *dragHandle = [[UIView alloc] initWithFrame:CGRectMake(0, 0, TOOLBAR_WIDTH, tbBtnH)];
+        dragHandle.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.12];
         dragHandle.layer.cornerRadius = 4;
         dragHandle.userInteractionEnabled = YES;
         dragHandle.tag = index;
-        dragHandle.layer.zPosition = 9997;  // above the hosted appView
         for (int dot = 0; dot < 3; dot++) {
-            UIView *line = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 12, 2)];
-            line.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.6];
+            UIView *line = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 14, 2)];
+            line.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.7];
             line.layer.cornerRadius = 1;
-            line.center = CGPointMake(edgeW / 2.0, 9 + dot * 8);
+            line.center = CGPointMake(TOOLBAR_WIDTH / 2.0, 9 + dot * 9);
             [dragHandle addSubview:line];
         }
         UIPanGestureRecognizer *hPan = [[UIPanGestureRecognizer alloc] initWithTarget:gDragHandler
                                                                                action:@selector(handleDrag:)];
         [dragHandle addGestureRecognizer:hPan];
-        [gPanes[index] addSubview:dragHandle];
+        [toolbar addSubview:dragHandle];
         gDragHandles[index] = dragHandle;
 
         UIButton *paneClose = [UIButton buttonWithType:UIButtonTypeCustom];
-        paneClose.frame = CGRectMake(0, 0, edgeW, btnH);
+        paneClose.frame = CGRectMake(0, 0, TOOLBAR_WIDTH, tbBtnH);
         [paneClose setTitle:@"×" forState:UIControlStateNormal];
         [paneClose setTitle:@"×" forState:UIControlStateHighlighted];
         paneClose.titleLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightBold];
         [paneClose setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.85] forState:UIControlStateNormal];
         [paneClose setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
-        paneClose.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.4];
+        paneClose.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.12];
         paneClose.layer.cornerRadius = 4;
         paneClose.tag = index;
-        paneClose.layer.zPosition = 9998;
         [paneClose addTarget:gDragHandler action:@selector(closeButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [gPanes[index] addSubview:paneClose];
+        [toolbar addSubview:paneClose];
         gCloseButtons[index] = paneClose;
+
+        [addTarget addSubview:toolbar];
+        gPaneToolbars[index] = toolbar;
 
         // Capsule button: shown when the pane is closed via ×. Displays
         // the app name, is draggable, and tapping it restores the pane.
@@ -2925,6 +3056,32 @@ UIColor *paneColor = [UIColor clearColor];
     } else {
         gToggleButton = nil;
     }
+
+    // 0.1.58: manual-start button — car mode with ManualStart ON shows only
+    // this button on connect; hosting begins when the user taps it. Hidden by
+    // default; the end-of-create branch reveals it.
+    if (!testMode && !gAutoStartOnCreate && PrefBool(kPrefsManualStart, NO)) {
+        if (!gStartButton) {
+            gStartButton = [UIButton buttonWithType:UIButtonTypeCustom];
+            [gStartButton setTitle:@"▶ 开始" forState:UIControlStateNormal];
+            [gStartButton setTitle:@"▶ 开始" forState:UIControlStateHighlighted];
+            gStartButton.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+            [gStartButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [gStartButton setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.7] forState:UIControlStateHighlighted];
+            gStartButton.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.55];
+            gStartButton.layer.cornerRadius = 16;
+            gStartButton.layer.borderWidth = 1.0;
+            gStartButton.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.35].CGColor;
+            gStartButton.layer.zPosition = 10000;
+            gStartButton.frame = CGRectMake(0, 0, 160, 66);
+            [gStartButton addTarget:gDragHandler action:@selector(startButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+            [window addSubview:gStartButton];
+        }
+        gStartButton.hidden = YES;
+    } else {
+        if (gStartButton) gStartButton.hidden = YES;
+    }
+
     gWindow = window;
 
     // 0.1.55: single controls strip, created once. Added to the WINDOW (not
@@ -3028,24 +3185,45 @@ UIColor *paneColor = [UIColor clearColor];
         // Phone test mode (the connect wave never happens there) and rebuilds
         // of an already-running interface keep the old auto-host behavior.
         HostAllPanes(testMode);
+    } else if (PrefBool(kPrefsManualStart, NO)) {
+        // 0.1.58: MANUAL start — the interface is built but nothing is
+        // hosted (no Live controllers exist yet, so the connect wave is
+        // harmless). Only the centered start button is shown; tapping it
+        // runs RestoreNow (respecting the never-Live-while-unlocked gate).
+        gManualAwaitingStart = YES;
+        for (int index = 0; index < count; index++) {
+            if (gPanes[index]) gPanes[index].hidden = YES;
+            if (gCapsules[index]) gCapsules[index].hidden = YES;
+            if (gPaneToolbars[index]) gPaneToolbars[index].hidden = YES;
+        }
+        for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
+        if (gStartButton) gStartButton.hidden = NO;
+        CLog(@"ui: car mode — manual start waiting for user");
     } else {
-        // 0.1.52: CarPlay connect — restore the user's saved layout. Panes
-        // that were open (not closed via ×) are shown and hosted at their
-        // saved position/zoom; panes that were closed appear as capsules.
-        // Safety: never go Live while the phone is unlocked (foreground=No
-        // crash risk). If locked, restore immediately. If unlocked, defer to
-        // the next lock event (HandleLockStateChanged will restore).
-        if (gLockStateKnown && gPhoneLocked) {
-            CLog(@"ui: car mode — restoring saved layout (phone locked)");
-            RestoreNow();
-        } else {
-            // Phone unlocked or lock state unknown — defer to next lock.
-            gPendingShow = 1;
+        // 0.1.58: AUTO start — show the saved layout as placeholder panes
+        // (closed panes get their capsules immediately), but DEFER the actual
+        // hosting until the CarPlay setup wave has passed
+        // (AUTO_START_DELAY_SECONDS). No Live controller exists during the
+        // wait, so the "show -> disappear -> reappear" flicker is gone.
+        gAutoStartArmed = YES;
+        gAutoStartAt = CFAbsoluteTimeGetCurrent() + AUTO_START_DELAY_SECONDS;
+        for (int index = 0; index < count; index++) {
+            if (!gPaneClosed[index]) continue;
+            if (gPanes[index]) gPanes[index].hidden = YES;
+            if (gPaneToolbars[index]) gPaneToolbars[index].hidden = YES;
+            LayoutCapsuleForPane(index);
+        }
+        if (gLockStateKnown && !gPhoneLocked) {
+            // Unlocked: nothing is Live yet — hide the placeholders and let
+            // the unlock listener show the capsule row; the lock will start.
             for (int index = 0; index < count; index++) {
                 if (gPanes[index]) gPanes[index].hidden = YES;
+                if (gPaneToolbars[index]) gPaneToolbars[index].hidden = YES;
             }
             for (int i = 0; i < MAX_PANES; i++) if (gDividers[i]) gDividers[i].hidden = YES;
-            CLog(@"ui: car mode — layout restore deferred until phone locks");
+            CLog(@"ui: car mode — auto start armed, placeholders hidden (phone unlocked)");
+        } else {
+            CLog(@"ui: car mode — auto start armed, hosting in %.0fs", AUTO_START_DELAY_SECONDS);
         }
     }
     gAutoStartOnCreate = NO;
@@ -3150,11 +3328,13 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
+gStartButton = nil;
+gToastLabel = nil;
 [gControlStrip removeFromSuperview];
 gControlStrip = nil;
 gControlLabel = nil;
@@ -3176,11 +3356,13 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
+gStartButton = nil;
+gToastLabel = nil;
 [gControlStrip removeFromSuperview];
 gControlStrip = nil;
 gControlLabel = nil;
@@ -3200,11 +3382,13 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
+gStartButton = nil;
+gToastLabel = nil;
 [gControlStrip removeFromSuperview];
 gControlStrip = nil;
 gControlLabel = nil;
@@ -3223,11 +3407,13 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
 gLockHintLabel = nil;
+gStartButton = nil;
+gToastLabel = nil;
 [gControlStrip removeFromSuperview];
 gControlStrip = nil;
 gControlLabel = nil;
@@ -3240,6 +3426,19 @@ gCurrentPane = -1;
             } else {
                 if (gWindow.hidden && !gUserClosed) {
                     gWindow.hidden = NO;
+                }
+                // 0.1.58: auto-start armed at connect — once the settle
+                // window passes, restore the saved layout (only while the
+                // phone is locked; otherwise keep waiting for the lock).
+                if (gAutoStartArmed && CFAbsoluteTimeGetCurrent() >= gAutoStartAt) {
+                    gAutoStartArmed = NO;
+                    if (gLockStateKnown && gPhoneLocked) {
+                        CLog(@"ui: connect settle window passed — auto-starting");
+                        RestoreNow();
+                    } else {
+                        gPendingShow = 1;
+                        CLog(@"ui: settle window passed but phone unlocked — start deferred to next lock");
+                    }
                 }
                 // Deferred start from an early tap: the settle window passed.
                 if (gPendingStart && gConnectAt > 0 &&
@@ -3256,7 +3455,7 @@ gCurrentPane = -1;
                         StartNow();
                     }
                 }
-                if (!gUserClosed && !gAwaitingStart) {
+                if (!gUserClosed && !gAwaitingStart && !gManualAwaitingStart) {
                     HealthCheckSlots();
                 }
                 return;
@@ -3284,7 +3483,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.57 loaded ---");
+        CLog(@"--- DashSplit 0.1.58 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         

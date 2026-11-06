@@ -12,9 +12,10 @@ private let keyEnabled = "Enabled"
 private let keySelectedApps = "SelectedApps"
 private let keyFitMode = "FitMode"
 private let keyTestLandscape = "TestLandscape"
+private let keyManualStart = "ManualStart"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.57"
+private let tweakVersion = "0.1.58"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 
@@ -519,7 +520,8 @@ final class DashSplitPrefListController: PSListController {
                     name: "通用",
                     footerText: "启用后,连接CarPlay并锁屏时\n自动显示胶囊排,点击胶囊打开App。"
                 ),
-                ToggleCell(name: "启用分屏", key: keyEnabled, defaultValue: true)
+                ToggleCell(name: "启用分屏", key: keyEnabled, defaultValue: true),
+                ToggleCell(name: "手动开始", key: keyManualStart, defaultValue: false)
             ], to: &specifiers, in: self)
 
             // 应用选择
