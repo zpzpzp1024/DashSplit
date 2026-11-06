@@ -6,8 +6,6 @@
 
 import Preferences
 import UIKit
-import ObjectiveC
-import Darwin
 
 private let prefsFile = "/var/mobile/Library/Preferences/zp.dashsplit.plist"
 private let keyEnabled = "Enabled"
@@ -17,7 +15,7 @@ private let keyTestLandscape = "TestLandscape"
 private let keyManualStart = "ManualStart"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.59"
+private let tweakVersion = "0.1.60"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 
@@ -194,38 +192,6 @@ private func appName(for bundleID: String, apps: [[String: String]]) -> String {
     apps.first(where: { $0["id"] == bundleID })?["name"] ?? bundleID
 }
 
-// 0.1.59: app icon for a bundle ID. First tries the id-argument
-// LSApplicationWorkspace.iconForApplication: (usable via perform); falls back
-// to LSApplicationProxy.iconDataForVariant: whose plain-int argument requires
-// an objc_msgSend call with an explicit C signature.
-private func appIcon(for bundleID: String) -> UIImage? {
-    // Fast path: iconForApplication: takes an object → perform works.
-    if let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type,
-       workspaceClass.responds(to: NSSelectorFromString("defaultWorkspace")),
-       let workspace = workspaceClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject,
-       workspace.responds(to: NSSelectorFromString("iconForApplication:")),
-       let icon = workspace.perform(NSSelectorFromString("iconForApplication:"), with: bundleID)?.takeUnretainedValue() as? UIImage {
-        return icon
-    }
-
-    // Fallback: iconDataForVariant: takes a plain int → objc_msgSend, resolved
-    // through dlsym (Swift cannot reference the variadic C symbol directly).
-    guard
-        let proxyClass = NSClassFromString("LSApplicationProxy") as? NSObject.Type,
-        let proxy = proxyClass.perform(NSSelectorFromString("applicationProxyForIdentifier:"), with: bundleID)?.takeUnretainedValue() as? NSObject
-    else { return nil }
-
-    let selector = NSSelectorFromString("iconDataForVariant:")
-    guard proxy.responds(to: selector) else { return nil }
-
-    typealias MsgSendFunction = @convention(c) (AnyObject, Selector, Int32) -> Unmanaged<AnyObject>?
-    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "objc_msgSend") else { return nil }  // RTLD_DEFAULT
-    let msgSend = unsafeBitCast(symbol, to: MsgSendFunction.self)
-    guard let unmanaged = msgSend(proxy, selector, 2) else { return nil }
-    let data = unmanaged.takeUnretainedValue() as? Data
-    return data.flatMap(UIImage.init)
-}
-
 // MARK: - Multi-select app picker
 
 private final class MultiAppRowTarget: NSObject {
@@ -261,21 +227,6 @@ class MultiAppPickerController: PSListController {
     @objc func reloadPicker() {
         setValue(nil, forKey: "_specifiers")
         perform(NSSelectorFromString("reloadSpecifiers"))
-    }
-
-    // 0.1.59: display each row's app icon (belt-and-suspenders alongside the
-    // specifier iconImage property — some cell types ignore that property).
-    override func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
-        super.tableView(tableView, willDisplay: cell, forRowAt: indexPath)
-        guard
-            let preferenceCell = cell as? PSTableCell,
-            let bid = preferenceCell.specifier?.property(forKey: "dashsplitBundleID") as? String,
-            let icon = appIcon(for: bid)
-        else { return }
-        cell.imageView?.image = icon
-        cell.imageView?.contentMode = .scaleAspectFit
-        cell.imageView?.layer.cornerRadius = 6
-        cell.imageView?.layer.masksToBounds = true
     }
 
     override var specifiers: NSMutableArray? {
@@ -324,13 +275,6 @@ class MultiAppPickerController: PSListController {
                         edit: nil
                     )
                     row?.buttonAction = #selector(MultiAppRowTarget.toggleApp)
-                    // 0.1.59: stash the bundle ID and let Preferences render the
-                    // icon via the standard iconImage property; willDisplayCell
-                    // below is a second fallback for the image view.
-                    row?.setProperty(bid, forKey: "dashsplitBundleID")
-                    if let icon = appIcon(for: bid) {
-                        row?.setProperty(icon, forKey: "iconImage")
-                    }
                     if let row = row { specifiers.add(row) }
                 }
             }
