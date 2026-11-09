@@ -5,7 +5,7 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 > English version: [README.en.md](README.en.md)
 
 - **包名**：`zp.dashsplit`
-- **当前版本**：0.1.62 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
+- **当前版本**：0.1.63 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
 - **宿主模式参考**：[carplay-cast](https://github.com/EthanArbuckle/carplay-cast)（Apache-2.0）
 
 ---
@@ -72,7 +72,7 @@ killall -9 SpringBoard
 
 ```powershell
 ./deploy.ps1 -Device 192.168.1.23 -Latest        # 安装最新 release
-./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.62_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.63_iphoneos-arm64.deb
 ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow # 实时跟日志
 ```
 

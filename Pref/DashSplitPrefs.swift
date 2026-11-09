@@ -15,7 +15,7 @@ private let keyTestLandscape = "TestLandscape"
 private let keyManualStart = "ManualStart"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.62"
+private let tweakVersion = "0.1.63"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 

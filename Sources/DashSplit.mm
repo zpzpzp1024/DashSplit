@@ -1,5 +1,17 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.63: the objc_exception_throw hook is LOG-ONLY again. 0.1.33 tried
+// swallowing there (return without calling the original throw) and every
+// instance died with signal 11 — the noreturn caller runs off the rail, the
+// same failure recorded for 0.1.1, re-introduced by 0.1.33. Matching
+// assertions are resynced then passed through; the uncaught-exception
+// handler turns them into a diagnosable abort. Signal-level crashes are now
+// counted too, so crash loops actually reach the >=3 "skip create" guard.
+// 0.1.63 also adds a per-pane maximize/restore toolbar button (fills host
+// height keeping the phone aspect, restores the pre-maximize size/position on
+// the second tap) and drops the right-edge ⟲ reset button; the zoom slider is
+// half-height.
+//
 // 0.1.28: never-Live-while-unlocked. The 0.1.27 field log shows every
 // respring came from ENTERING Live at an unsafe moment — a start 8s after
 // unlock (dead in 2s: the system pushes foreground=No straight into the
@@ -166,6 +178,10 @@ static void CLog(NSString *format, ...)
 #pragma mark - Crash capture
 
 static int gCrashCount = 0;
+// 0.1.63: set when the current crash was already counted by the
+// uncaught-exception handler (its abort re-enters the signal handler as
+// SIGABRT); the signal-level count then skips to avoid counting twice.
+static BOOL gCrashCountedForSignal = NO;
 
 static void DashSplitWriteRaw(const char *text)
 {
@@ -181,6 +197,28 @@ static void DashSplitSignalHandler(int signo)
     char header[96];
     snprintf(header, sizeof(header), "\n*** dashsplit: signal %d ***\n", signo);
     DashSplitWriteRaw(header);
+    
+    // 0.1.63: count signal-level crashes too. Before, only the
+    // uncaught-exception handler bumped gCrashCount, so a loop of plain
+    // SIGSEGV/abort crashes never reached the >=3 "skip create" guard.
+    // gCrashCountedForSignal is set by DashSplitExceptionHandler so the
+    // SIGABRT it generates afterwards is not double-counted. Raw
+    // open/write/snprintf only — a signal handler must stay async-signal-safe.
+    if (!gCrashCountedForSignal) {
+        gCrashCount++;
+        char countBuf[48];
+        int len = snprintf(countBuf, sizeof(countBuf), "%d", gCrashCount);
+        if (len > 0) {
+            int cfd = open(COCKPIT_CRASHCOUNT, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (cfd >= 0) {
+                write(cfd, countBuf, (size_t)len);
+                close(cfd);
+            }
+        }
+        char countLog[96];
+        snprintf(countLog, sizeof(countLog), "*** dashsplit: signal crash count now %d\n", gCrashCount);
+        DashSplitWriteRaw(countLog);
+    }
     
     int crashFD = open(COCKPIT_CRASHED, O_WRONLY | O_CREAT, 0644);
     if (crashFD >= 0) {
@@ -210,6 +248,7 @@ static void DashSplitExceptionHandler(NSException *exception)
     [[NSFileManager defaultManager] createFileAtPath:@COCKPIT_CRASHED contents:[NSData data] attributes:nil];
     
     gCrashCount++;
+    gCrashCountedForSignal = YES;  // 0.1.63: an abort follows; don't double-count it in the signal handler
     NSString *countStr = [NSString stringWithFormat:@"%d", gCrashCount];
     [countStr writeToFile:@COCKPIT_CRASHCOUNT atomically:YES encoding:NSUTF8StringEncoding error:nil];
     CLog(@"*** dashsplit: crash count now %d", gCrashCount);
@@ -797,15 +836,16 @@ static void DashSplitExceptionThrowHook(id exception)
         if ([exception isKindOfClass:[NSException class]]) {
             NSException *nsException = (NSException *)exception;
             if (DashSplitShouldSwallow([nsException name], [nsException reason])) {
-                CLog(@"assert: foreground assertion reached objc_exception_throw — swallowing (raise hooks missed it)");
+                // 0.1.63: NEVER swallow at the throw level. 0.1.33 added a
+                // "return" here (skipping the original throw) and every hit
+                // died with signal 11 — objc_exception_throw is compiled
+                // noreturn, so returning lets the caller run off the rail
+                // (the failure 0.1.1 recorded, re-introduced by 0.1.33).
+                // Resync in case an internal @catch keeps the process alive,
+                // then pass through: the uncaught-exception handler turns it
+                // into a clean, diagnosable abort, not memory corruption.
+                CLog(@"assert: foreground assertion reached objc_exception_throw (raise hooks missed it), passing through");
                 DashSplitResyncAfterSwallow([nsException reason] ?: @"");
-                // Swallow: return WITHOUT calling the original throw.
-                // The caller (SpringBoard's assert macro) tolerates the raise
-                // returning — verified by the +raise:format: hook working in
-                // 0.1.2+. The 0.1.1 segfault was from a different swallow path;
-                // this return is safe because the assert macro checks the
-                // exception afterwards and continues if it was swallowed.
-                return;
             }
         }
     } @catch (__unused NSException *ignored) { }
@@ -1293,7 +1333,6 @@ static BOOL gCapsuleDetached[MAX_PANES];
 static UIView *gControlStrip;
 static UILabel *gControlLabel;
 static UISlider *gZoomSlider;
-static UIButton *gResetButton;
 static UIButton *gCloseButton;  // vestigial — 0.1.57+ close lives on each pane
 static int gCurrentPane = -1;   // -1 = no pane selected
 
@@ -1305,6 +1344,14 @@ static int gCurrentPane = -1;   // -1 = no pane selected
 static UIView *gDragHandles[MAX_PANES];
 static UIButton *gCloseButtons[MAX_PANES];
 static UIView *gPaneToolbars[MAX_PANES];
+// 0.1.63: per-pane maximize/restore button (between the drag handle and the
+// close ×). "放大" fills the host height keeping the phone aspect (no
+// letterboxing) and snapshots the pre-maximize zoom + center; tapping again
+// ("还原") restores that exact size & position.
+static UIButton *gMaximizeButtons[MAX_PANES];
+static BOOL gMaximized[MAX_PANES];
+static CGFloat gMaximizePrevZoom[MAX_PANES];
+static CGPoint gMaximizePrevCenter[MAX_PANES];
 
 // Drag session state for long-press pane dragging.
 static CGPoint gDragStartCenter = CGPointZero;
@@ -1633,7 +1680,7 @@ static BOOL gPaneClosed[MAX_PANES];
 - (void)handleCapsuleDrag:(UIPanGestureRecognizer *)gesture;
 - (void)capsuleTapped:(UIButton *)sender;
 - (void)zoomSliderChanged:(UISlider *)slider;
-- (void)resetZoomTapped:(UIButton *)sender;
+- (void)maximizeTapped:(UIButton *)sender;
 - (void)closeButtonTapped:(UIButton *)sender;
 - (void)startButtonTapped:(UIButton *)sender;
 @end
@@ -1732,7 +1779,7 @@ static void LayoutToolbarForPane(int index)
     if (!tb) return;
     CGRect bf = gPaneBaseFrames[index];
     CGFloat tbBtnH = 40;
-    CGFloat tbH = tbBtnH * 2 + 6 + 8;   // two buttons + gap + padding
+    CGFloat tbH = tbBtnH * 3 + 6 * 2 + 8;   // handle + maximize/restore + close + gaps + padding (0.1.63)
     // Default: just outside the pane's RIGHT edge.
     CGFloat x = CGRectGetMaxX(bf) + 3;
     UIView *host = tb.superview;
@@ -1747,8 +1794,11 @@ static void LayoutToolbarForPane(int index)
     if (gDragHandles[index]) {
         gDragHandles[index].frame = CGRectMake(3, 4, TOOLBAR_WIDTH - 6, tbBtnH);
     }
+    if (gMaximizeButtons[index]) {
+        gMaximizeButtons[index].frame = CGRectMake(3, 4 + tbBtnH + 6, TOOLBAR_WIDTH - 6, tbBtnH);
+    }
     if (gCloseButtons[index]) {
-        gCloseButtons[index].frame = CGRectMake(3, 4 + tbBtnH + 6, TOOLBAR_WIDTH - 6, tbBtnH);
+        gCloseButtons[index].frame = CGRectMake(3, 4 + (tbBtnH + 6) * 2, TOOLBAR_WIDTH - 6, tbBtnH);
     }
     tb.hidden = gPaneClosed[index];
     [tb.superview bringSubviewToFront:tb];
@@ -1907,13 +1957,54 @@ static void ShowToast(NSString *text)
     SetPaneZoom(gCurrentPane, slider.value);
 }
 
-// Reset (⟲): restore the current pane to its default (pre-zoom) size.
-- (void)resetZoomTapped:(UIButton *)sender
+// 0.1.63: per-pane maximize/restore. "放大" scales the pane so its height
+// fills the host (width follows the phone aspect — no letterboxing) and
+// snapshots the pre-maximize zoom + center; the button flips to "还原" and the
+// next tap restores that exact size & position. Replaces the old right-edge
+// ⟲ reset button.
+- (void)maximizeTapped:(UIButton *)sender
 {
-    if (gCurrentPane < 0) return;
-    if (gPaneZoom[gCurrentPane] == 1.0f) return;
-    CLog(@"zoom: pane[%d] reset to 1.0", gCurrentPane);
-    SetPaneZoom(gCurrentPane, 1.0f);
+    int paneIndex = (int)sender.tag;
+    if (paneIndex < 0 || paneIndex >= MAX_PANES) return;
+    if (gPaneClosed[paneIndex]) return;
+    if (!gPanes[paneIndex]) return;
+
+    if (gMaximized[paneIndex]) {
+        // Restore the exact pre-maximize size & position.
+        SetPaneZoom(paneIndex, gMaximizePrevZoom[paneIndex]);
+        gPaneCenters[paneIndex] = gMaximizePrevCenter[paneIndex];
+        gMaximized[paneIndex] = NO;
+        Layout();
+        SavePaneLayoutState();
+        [sender setTitle:@"放大" forState:UIControlStateNormal];
+        [sender setTitle:@"放大" forState:UIControlStateHighlighted];
+        CLog(@"zoom: pane[%d] restored zoom=%.2f center={%.0f,%.0f}", paneIndex,
+             gPaneZoom[paneIndex], gPaneCenters[paneIndex].x, gPaneCenters[paneIndex].y);
+        return;
+    }
+
+    // Maximize: height = host height, width = height / phone aspect.
+    UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
+    if (!host) return;
+    CGRect bounds = host.bounds;
+    if (bounds.size.height <= 0) return;
+    CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
+    CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
+    if (phoneW <= 0) phoneW = 1;
+    CGFloat paneAspect = phoneH / phoneW;
+    CGFloat baseW = MAX(floor(bounds.size.width / 5.0) * AppSizeForIndex(paneIndex), 60);
+    CGFloat baseH = baseW * paneAspect;
+    if (baseH > bounds.size.height) baseH = bounds.size.height;
+    if (baseH <= 0) return;
+    CGFloat fillZoom = bounds.size.height / baseH;
+
+    gMaximizePrevZoom[paneIndex] = gPaneZoom[paneIndex];
+    gMaximizePrevCenter[paneIndex] = gPaneCenters[paneIndex];
+    gMaximized[paneIndex] = YES;
+    SetPaneZoom(paneIndex, fillZoom);
+    [sender setTitle:@"还原" forState:UIControlStateNormal];
+    [sender setTitle:@"还原" forState:UIControlStateHighlighted];
+    CLog(@"zoom: pane[%d] maximized zoom=%.2f", paneIndex, fillZoom);
 }
 
 - (void)handleCapsuleDrag:(UIPanGestureRecognizer *)gesture
@@ -2126,7 +2217,6 @@ static void SelectPane(int index)
             gZoomSlider.value = gPaneZoom[index];
         }
     }
-    if (gResetButton) gResetButton.enabled = usable;
     if (gCloseButton) gCloseButton.enabled = usable;
 }
 
@@ -2162,19 +2252,17 @@ static void LayoutControls(CGRect bounds)
 {
     if (!gControlStrip) return;
     CGFloat stripW = 36;
-    CGFloat stripH = 330;
+    CGFloat stripH = 150;   // 0.1.63: zoom slider height halved, ⟲ reset removed
     gControlStrip.frame = CGRectMake(bounds.size.width - stripW - 6,
                                      floor((bounds.size.height - stripH) / 2.0),
                                      stripW, stripH);
     if (gControlLabel) gControlLabel.frame = CGRectMake(0, 8, stripW, 34);
     if (gZoomSlider) {
         // Rotated frame: width is the visual height. Center it under the label.
-        gZoomSlider.center = CGPointMake(stripW / 2.0, 60 + 170 / 2.0);
+        gZoomSlider.center = CGPointMake(stripW / 2.0, 60 + 85 / 2.0);
     }
-    // 0.1.57: the × moved onto each pane; the right-edge strip keeps
-    // label + zoom slider + reset only.
-    CGFloat y = 60 + 170 + 6;
-    if (gResetButton) { gResetButton.frame = CGRectMake(8, y, stripW - 16, 48); y += 54; }
+    // 0.1.63: the ⟲ reset button is gone — every pane's toolbar carries its
+    // own maximize/restore button now; the strip keeps only label + zoom slider.
 }
 
 #pragma mark - Pane layout persistence
@@ -2572,7 +2660,7 @@ static void RestoreNow(void)
         TeardownAllHosts();
         gWindow.hidden = YES;
         gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -2583,7 +2671,6 @@ gToastLabel = nil;
 gControlStrip = nil;
 gControlLabel = nil;
 gZoomSlider = nil;
-gResetButton = nil;
 gCloseButton = nil;
 gCurrentPane = -1;
         gCurrentPaneCount = 0;
@@ -3009,7 +3096,8 @@ UIColor *paneColor = [UIColor clearColor];
         // 0.1.58: per-pane external toolbar — a sibling of the pane (added to
         // addTarget, NOT to the pane), tucked outside the pane's right edge so
         // it never covers app content and can't be swallowed by the hosted
-        // remote view. Vertically stacked: drag handle on top, close × below.
+        // remote view. Vertically stacked: drag handle on top, maximize/
+        // restore in the middle (0.1.63), close × below.
         // Frames are set by Layout (tag = pane index).
         CGFloat tbBtnH = 40;
         UIView *toolbar = [[UIView alloc] initWithFrame:CGRectZero];
@@ -3036,6 +3124,20 @@ UIColor *paneColor = [UIColor clearColor];
         [dragHandle addGestureRecognizer:hPan];
         [toolbar addSubview:dragHandle];
         gDragHandles[index] = dragHandle;
+
+        UIButton *maximizeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        maximizeBtn.frame = CGRectMake(0, 0, TOOLBAR_WIDTH, tbBtnH);
+        [maximizeBtn setTitle:@"放大" forState:UIControlStateNormal];
+        [maximizeBtn setTitle:@"放大" forState:UIControlStateHighlighted];
+        maximizeBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        [maximizeBtn setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.85] forState:UIControlStateNormal];
+        [maximizeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
+        maximizeBtn.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+        maximizeBtn.layer.cornerRadius = 4;
+        maximizeBtn.tag = index;
+        [maximizeBtn addTarget:gDragHandler action:@selector(maximizeTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [toolbar addSubview:maximizeBtn];
+        gMaximizeButtons[index] = maximizeBtn;
 
         UIButton *paneClose = [UIButton buttonWithType:UIButtonTypeCustom];
         paneClose.frame = CGRectMake(0, 0, TOOLBAR_WIDTH, tbBtnH);
@@ -3149,7 +3251,8 @@ UIColor *paneColor = [UIColor clearColor];
         gControlLabel.userInteractionEnabled = NO;
         [gControlStrip addSubview:gControlLabel];
 
-        gZoomSlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 170, 24)];
+        // 0.1.63: 85pt (was 170) — after the -90° rotation this is the visual height.
+        gZoomSlider = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 85, 24)];
         gZoomSlider.minimumValue = 0.2f;
         gZoomSlider.maximumValue = 4.0f;
         gZoomSlider.value = 1.0f;
@@ -3159,17 +3262,6 @@ UIColor *paneColor = [UIColor clearColor];
         [gZoomSlider setMaximumTrackTintColor:[UIColor colorWithWhite:1.0 alpha:0.25]];
         [gZoomSlider addTarget:gDragHandler action:@selector(zoomSliderChanged:) forControlEvents:UIControlEventValueChanged];
         [gControlStrip addSubview:gZoomSlider];
-
-        gResetButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        [gResetButton setTitle:@"⟲" forState:UIControlStateNormal];
-        [gResetButton setTitle:@"⟲" forState:UIControlStateHighlighted];
-        gResetButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
-        [gResetButton setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.85] forState:UIControlStateNormal];
-        [gResetButton setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
-        gResetButton.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.3];
-        gResetButton.layer.cornerRadius = 4;
-        [gResetButton addTarget:gDragHandler action:@selector(resetZoomTapped:) forControlEvents:UIControlEventTouchUpInside];
-        [gControlStrip addSubview:gResetButton];
 
         // 0.1.57: the right-edge strip no longer has a close button — every
         // pane carries its own × (gCloseButtons). gCloseButton stays nil.
@@ -3376,7 +3468,7 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3387,7 +3479,6 @@ gToastLabel = nil;
 gControlStrip = nil;
 gControlLabel = nil;
 gZoomSlider = nil;
-gResetButton = nil;
 gCloseButton = nil;
 gCurrentPane = -1;
                 gCurrentPaneCount = 0;
@@ -3404,7 +3495,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3415,7 +3506,6 @@ gToastLabel = nil;
 gControlStrip = nil;
 gControlLabel = nil;
 gZoomSlider = nil;
-gResetButton = nil;
 gCloseButton = nil;
 gCurrentPane = -1;
                 gCurrentPaneCount = 0;
@@ -3430,7 +3520,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3441,7 +3531,6 @@ gToastLabel = nil;
 gControlStrip = nil;
 gControlLabel = nil;
 gZoomSlider = nil;
-gResetButton = nil;
 gCloseButton = nil;
 gCurrentPane = -1;
                 gCurrentPaneCount = 0;
@@ -3455,7 +3544,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3466,7 +3555,6 @@ gToastLabel = nil;
 gControlStrip = nil;
 gControlLabel = nil;
 gZoomSlider = nil;
-gResetButton = nil;
 gCloseButton = nil;
 gCurrentPane = -1;
                 gCurrentPaneCount = 0;
@@ -3531,7 +3619,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.62 loaded ---");
+        CLog(@"--- DashSplit 0.1.63 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
