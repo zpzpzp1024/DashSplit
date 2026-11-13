@@ -1454,7 +1454,7 @@ static void ScaleAppViewIntoContainer(UIView *appView, UIView *container, int pa
     [container addSubview:appView];
     appView.frame = CGRectMake(0, 0, initialSize.width, initialSize.height);
     CLog(@"scale: fitMode=%d initialSize=%@ container=%@ appView=%@",
-         fitMode,
+         effective,
          NSStringFromCGSize(initialSize),
          NSStringFromCGRect(container.frame),
          NSStringFromCGRect(appView.frame));
