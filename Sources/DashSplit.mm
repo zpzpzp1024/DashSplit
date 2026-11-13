@@ -1346,12 +1346,11 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         }
     } else if (effective == 1) {
         gNativeFillActive = NO;
-        // 0.1.66: restore the app to full phone size first — a previous
-        // landscape pass forced the native path and resized the views.
-        appView.frame = CGRectMake(0, 0, phone.width, phone.height);
-        appView.bounds = CGRectMake(0, 0, phone.width, phone.height);
-        contentView.frame = CGRectMake(0, 0, phone.width, phone.height);
-        contentView.bounds = CGRectMake(0, 0, phone.width, phone.height);
+        // 0.1.67: do NOT touch appView/contentView frames here — the system
+        // owns them, and forcing phone-size frames moved the content off-screen
+        // (black pane in 0.1.66). A landscape pass does resize these views, so
+        // switching back to portrait re-hosts the pane (landscapeTapped) for a
+        // clean restart instead of guessing the original sizes.
         // Non-uniform stretch: scale X and Y independently so the app content
         // fills the entire pane with no letterboxing. The full app UI remains
         // visible (nothing is clipped), but the aspect ratio changes.
@@ -1364,11 +1363,7 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
              scaleX, scaleY, NSStringFromCGSize(container.bounds.size), NSStringFromCGSize(phone));
     } else {
         gNativeFillActive = NO;
-        // 0.1.66: restore the app to full phone size first (see above).
-        appView.frame = CGRectMake(0, 0, phone.width, phone.height);
-        appView.bounds = CGRectMake(0, 0, phone.width, phone.height);
-        contentView.frame = CGRectMake(0, 0, phone.width, phone.height);
-        contentView.bounds = CGRectMake(0, 0, phone.width, phone.height);
+        // 0.1.67: frames are left to the system (see effective == 1 branch).
         // Aspect-fit: uniform scale so the full app UI fits inside the pane,
         // centered with letterboxing on the axis that doesn't fill.
         CGFloat scale = MIN(container.bounds.size.width / MAX(phone.width, 1),
@@ -2095,8 +2090,10 @@ static void ShowToast(NSString *text)
 }
 
 // 0.1.64: per-pane landscape/portrait toggle. Flips the pane orientation,
-// re-lays out (Layout swaps the base aspect and ApplyPaneOrientation rotates
-// the wrapper), then persists so a reconnect restores the same orientation.
+// re-lays out (Layout swaps the base aspect; ApplyPaneOrientation re-fits),
+// then persists so a reconnect restores the same orientation.
+// 0.1.67: the portrait switch re-hosts the pane so the scene layout restarts
+// clean — the landscape pass resized the scene's views/reference.
 - (void)landscapeTapped:(UIButton *)sender
 {
     int paneIndex = (int)sender.tag;
@@ -2104,8 +2101,26 @@ static void ShowToast(NSString *text)
     if (gPaneClosed[paneIndex]) return;
     if (!gPanes[paneIndex]) return;
 
+    BOOL wasLandscape = gPaneLandscape[paneIndex];
     gPaneLandscape[paneIndex] = !gPaneLandscape[paneIndex];
-    CLog(@"land: tap pane[%d] -> %@", paneIndex, gPaneLandscape[paneIndex] ? @"landscape" : @"portrait");
+    BOOL nowLandscape = gPaneLandscape[paneIndex];
+    CLog(@"land: tap pane[%d] -> %@", paneIndex, nowLandscape ? @"landscape" : @"portrait");
+
+    if (wasLandscape && !nowLandscape) {
+        // 0.1.67: portrait switch re-hosts the pane. The landscape pass told
+        // the scene to lay out at the wide pane size (reference + orientation)
+        // and resized appView/contentView — the portrait path cannot restore
+        // the original sizes, so rebuild the scene for a clean portrait layout.
+        HostSlot *slot = gSlots[paneIndex];
+        if (slot && slot.viewController && slot.bundleID.length) {
+            NSString *bid = slot.bundleID;
+            TeardownSlot(slot);
+            gSlots[paneIndex] = nil;
+            CLog(@"land: pane[%d] portrait — re-hosting %@ for a clean layout", paneIndex, bid);
+            gSlots[paneIndex] = HostApplication(bid, gOrientationViews[paneIndex], paneIndex);
+        }
+    }
+
     Layout();
     SavePaneLayoutState();
     CLog(@"land: pane[%d] %@ applied", paneIndex, gPaneLandscape[paneIndex] ? @"landscape" : @"portrait");
