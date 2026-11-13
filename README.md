@@ -5,12 +5,12 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 > English version: [README.en.md](README.en.md)
 
 - **包名**：`zp.dashsplit`
-- **当前版本**：0.1.63 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
+- **当前版本**：0.1.64 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
 - **宿主模式参考**：[carplay-cast](https://github.com/EthanArbuckle/carplay-cast)（Apache-2.0）
 
 ---
 
-## 功能特性（0.1.62）
+## 功能特性（0.1.64）
 
 1. **多应用分屏**：在系统设置「车载分屏」里勾选要上车的 App（最多 8 个，逗号分隔保存为 `SelectedApps`），连接 CarPlay 后同时出现在车机上；**已勾选的 App 在列表中置顶分组显示**（方便取消勾选），勾选顺序即分屏从左到右的顺序，置顶不影响分屏顺序。
 2. **每面板右侧外部工具条**：每个面板**外侧右侧竖排 2 个按钮**——上：**拖动把手**（按住上下左右拖动该面板）；下：**关闭 ×**（收起面板变胶囊）。工具条紧贴面板外缘、随面板移动/缩放，**不遮盖 app 任何区域**。
@@ -31,6 +31,8 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 14. **分屏无黑边（0.1.61+）**：每个分屏面板的**宽高比＝手机屏幕比例**，App 内容等比缩放后**正好填满面板，上下不再留黑边**（不变形、不裁切）；面板高度超出屏幕时按相同比例自动缩小，横屏车机也不会溢出。
 15. **工具条防丢（0.1.61+）**：面板放大导致右侧工具条（拖动把手 + 关闭 ×）伸出屏幕右边界时，工具条**自动翻转到面板左外侧**，始终保持可用。
 16. **单一「大小」滑杆（0.1.62+）**：设置里每个 App 原「占比（1-5）+ 缩放（10-100）」合并为一个**连续「大小」滑杆（10-600，100=默认宽度 1/5 屏宽）**，小于 100 缩小、大于 100 放大（最大 6 倍）；旧的占比×缩放设置**自动迁移**合并成对应的大小值。
+17. **面板横屏/竖屏切换（0.1.64+）**：每个面板工具条新增**横屏↔竖屏**按钮，点哪个转哪个、各面板独立。横屏时面板宽高比翻转为横屏比例、内容旋转 90° 铺满（无黑边）——视频/直播/图片类全屏内容直接获得横屏观看效果；配合「拉伸填满/原生填充」时支持横屏的 App 还会按横屏方向重新布局。状态与位置/缩放一起持久化，重连车机自动恢复。
+18. **WiFi 自动连接（0.1.64+）**：设置里配置“热点名称(SSID) + 密码（可留空）”，开启后**检测到 CarPlay 连接（有线/无线）自动连接该热点**——主路径 WiFiManagerClient 私有 API（添加网络 + joinOnce 立即加入），兑底 NEHotspotConfigurationManager。连接后 +5s/+10s 写入验证日志 `wifi: verify ... matched=1` 即判定生效；无车机时创建 `/var/mobile/Library/Preferences/zp.dashsplit.wifitest` 可在启动 5 秒后触发一次用于测试。
 
 ---
 
@@ -45,6 +47,7 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 | 放大/缩小 | 屏幕**右缘控制条滑杆** | 无级缩放当前面板（0.2×～动态上限，拉满铺满/超屏，以面板中心为锚点） |
 | 恢复尺寸 | 右缘控制条 **⟲** | 当前面板恢复缩放前大小（1.0×） |
 | 恢复 | 点击**胶囊** | 该面板恢复显示 |
+| 横屏/竖屏 | 面板工具条**第 2 个按钮（横屏⇄竖屏）** | 该面板在横屏/竖屏间切换（视频类内容横屏铺满，无黑边；状态自动保存） |
 | 拖动胶囊 | 按住胶囊拖动 | 可拖到任意位置（本会话保持）；重新「打开→关闭」后回到顶部对应槽位 |
 
 > 关闭的面板胶囊固定吸附在屏幕**顶部一行**（按选择顺序、固定槽位、水平居中、间距一致；显示中的 App 槽位留空）。布局任何变化都会实时保存；下次连接 CarPlay 时按保存的状态恢复。
@@ -72,7 +75,7 @@ killall -9 SpringBoard
 
 ```powershell
 ./deploy.ps1 -Device 192.168.1.23 -Latest        # 安装最新 release
-./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.63_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.64_iphoneos-arm64.deb
 ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow # 实时跟日志
 ```
 
@@ -111,6 +114,10 @@ killall -9 SpringBoard
 | `PaneZoom0`… | 每个面板的缩放比例（自动保存/恢复） |
 | `AppSize_<bundleID>` | 每个 App 的基础宽度（10-600，100=默认 1/5 屏宽；0.1.62 起取代 AppRatio/AppScale） |
 | `PaneClosed0`… | 每个面板的关闭状态（自动保存/恢复） |
+| `PaneLandscape0`… | 每个面板的横屏状态（0=竖屏，1=横屏；0.1.64 起，自动保存/恢复） |
+| `WifiAutoJoin` | WiFi 自动连接总开关（默认关；0.1.64 起） |
+| `WifiSSID` | 要自动连接的热点名称（0.1.64 起） |
+| `WifiPassword` | 热点密码，可留空（仅当手机曾连过该热点时才能连上；0.1.64 起） |
 
 Bundle ID 查询（SSH）：
 
@@ -151,6 +158,10 @@ done | grep -i didi   # 替换为要查的 App 关键字
 - `host: ...`：宿主 App 的每一步
 - `ui: pane[0] restored off={...} zoom=... closed=...`：布局恢复
 - `zoom: pane[1] +0.20 -> 1.40`：缩放事件
+- `land: pane[0] → landscape (rotate 90°)`：面板横屏切换（0.1.64）
+- `wifi: carplay connected — autojoin enabled=1 ssid="..."`：CarPlay 连接触发自动连（0.1.64）
+- `wifi: join "..." added=1 known=yes`：加入结果（0.1.64）
+- `wifi: verify t+5s current="..." target="..." matched=1`：**生效验证——matched=1 即连接成功**（0.1.64）
 
 ---
 
@@ -172,6 +183,8 @@ make package FINALPACKAGE=1
 ---
 
 ## 版本记录（摘要）
+
+- **0.1.64**：**面板横屏/竖屏切换**——每个面板工具条新增第 4 个按钮（横屏⇄竖屏），横屏时面板宽高比翻转为横屏比例、App 内容旋转 90° 铺满（无黑边），各面板独立；状态并入布局持久化（`PaneLandscape%d`），重连恢复、重选 App 组合随布局重置。**WiFi 自动连接**——设置新增「WiFi 自动连接」（总开关 + 热点名称 + 密码可留空），CarPlay 连接（有线/无线）上升沿自动连配置热点：主路径 WiFiManagerClient 私有 API（add + joinOnce），兑底 NEHotspotConfigurationManager；连接后 +5s/+10s 输出 `wifi: verify current=... matched=1/0` 验证日志；`zp.dashsplit.wifitest` 标记文件可无车测试。
 
 - **0.1.62**：**单一「大小」滑杆**——设置里每个 App 的「占比（1-5）」与「缩放（10-100）」两个滑杆（效果都是等比缩放面板，纯重复）合并为一个**连续「大小」滑杆（10-600，100=默认宽度 1/5 屏宽）**；旧设置（占比×缩放）**自动迁移**合并成对应的新值（夹在 10-600），设置界面与 tweak 侧各有一份只读/写回迁移，老布局尺寸保持不变。
 

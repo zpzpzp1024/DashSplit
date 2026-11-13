@@ -13,9 +13,13 @@ private let keySelectedApps = "SelectedApps"
 private let keyFitMode = "FitMode"
 private let keyTestLandscape = "TestLandscape"
 private let keyManualStart = "ManualStart"
+// 0.1.64: WiFi auto-join on CarPlay connect.
+private let keyWifiAutoJoin = "WifiAutoJoin"
+private let keyWifiSSID = "WifiSSID"
+private let keyWifiPassword = "WifiPassword"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.63"
+private let tweakVersion = "0.1.64"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 
@@ -615,6 +619,17 @@ final class DashSplitPrefListController: PSListController {
             }
             SpecifierFactory.add([
                 ToggleCell(name: "手机测试模式", key: "TestOnMainScreen", defaultValue: false)
+            ], to: &specifiers, in: self)
+
+            // 0.1.64: WiFi auto-join on CarPlay connect — configured hotspot.
+            SpecifierFactory.add([
+                GroupCell(
+                    name: "WiFi 自动连接",
+                    footerText: "开启后，每次检测到 CarPlay 连接（有线或无线）时自动连接下方配置的热点。密码可留空（仅当手机曾连过该热点时才能成功）。连接后 +5s/+10s 会写入验证日志（wifi: verify ... matched=1 即生效）。"
+                ),
+                ToggleCell(name: "启用自动连接", key: keyWifiAutoJoin, defaultValue: false),
+                TextCell(name: "热点名称(SSID)", key: keyWifiSSID, defaultValue: "", isSecure: false),
+                TextCell(name: "热点密码", key: keyWifiPassword, defaultValue: "", isSecure: true)
             ], to: &specifiers, in: self)
 
             // Respring button

@@ -1,5 +1,18 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.64: per-pane 横屏/竖屏 toggle — a 4th toolbar button (land: ...).
+// The pane flips to landscape aspect and the hosted content rotates 90° via
+// a per-pane bounds-swapped wrapper (the same trick the test container uses,
+// at the pane level). Aspect-fit math reads the swapped wrapper bounds, so
+// the app fills the rotated pane with no letterboxing; native-fill mode
+// reports the swapped size, so landscape-capable apps genuinely re-layout.
+// State persists as PaneLandscape%d and resets with the layout when the app
+// selection changes. 0.1.64 also adds WiFi auto-join on CarPlay connect
+// (Settings: WifiAutoJoin / WifiSSID / WifiPassword; primary path
+// WiFiManagerClient private API, NEHotspotConfiguration fallback; rising-
+// edge trigger in Tick + verify logs + zp.dashsplit.wifitest marker for
+// no-car testing).
+//
 // 0.1.63: the objc_exception_throw hook is LOG-ONLY again. 0.1.33 tried
 // swallowing there (return without calling the original throw) and every
 // instance died with signal 11 — the noreturn caller runs off the rail, the
@@ -104,6 +117,10 @@
 #import <string.h>
 #import <dlfcn.h>
 
+#if __has_include(<SystemConfiguration/CaptiveNetwork.h>)
+#import <SystemConfiguration/CaptiveNetwork.h>
+#endif
+
 #if __has_include(<execinfo.h>)
 #import <execinfo.h>
 #define COCKPIT_HAVE_BACKTRACE 1
@@ -118,6 +135,8 @@
 #define COCKPIT_CRASHED "/var/mobile/Library/Preferences/zp.dashsplit.crashed"
 #define COCKPIT_NEWSCENE "/var/mobile/Library/Preferences/zp.dashsplit.newscene"
 #define COCKPIT_CRASHCOUNT "/var/mobile/Library/Preferences/zp.dashsplit.crashcount"
+// 0.1.64: debug marker — trigger one WiFi auto-join on boot without a car.
+#define COCKPIT_WIFITEST "/var/mobile/Library/Preferences/zp.dashsplit.wifitest"
 
 // Maximum number of panes (apps) supported simultaneously.
 #define MAX_PANES 8
@@ -136,6 +155,10 @@ static NSString *const kPrefsFitMode = @"FitMode";
 // 0.1.58: manual-start gate — when ON, car mode shows only a start button on
 // connect and hosting begins on the user's tap (instead of auto-starting).
 static NSString *const kPrefsManualStart = @"ManualStart";
+// 0.1.64: WiFi auto-join on CarPlay connect (configured hotspot).
+static NSString *const kPrefsWifiAutoJoin = @"WifiAutoJoin";
+static NSString *const kPrefsWifiSSID     = @"WifiSSID";
+static NSString *const kPrefsWifiPassword = @"WifiPassword";
 
 #pragma mark - Logging
 
@@ -1353,6 +1376,13 @@ static BOOL gMaximized[MAX_PANES];
 static CGFloat gMaximizePrevZoom[MAX_PANES];
 static CGPoint gMaximizePrevCenter[MAX_PANES];
 
+// 0.1.64: per-pane orientation — gPaneLandscape flips the pane to landscape
+// aspect; gOrientationViews (always the HostSlot container) carries the 90°
+// rotation so hosted content fills the rotated pane exactly.
+static BOOL gPaneLandscape[MAX_PANES];
+static UIView *gOrientationViews[MAX_PANES];
+static UIButton *gLandscapeButtons[MAX_PANES];
+
 // Drag session state for long-press pane dragging.
 static CGPoint gDragStartCenter = CGPointZero;
 static CGPoint gDragStartPoint = CGPointZero;
@@ -1362,6 +1392,8 @@ static void SelectPane(int index);
 static void SetPaneZoom(int index, CGFloat zoom);
 static void LayoutControls(CGRect bounds);
 static void AttachPaneDragGesture(UIView *target);
+static CGFloat PaneAspect(int index);
+static void ApplyPaneOrientation(int index);
 
 static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
 {
@@ -1681,6 +1713,7 @@ static BOOL gPaneClosed[MAX_PANES];
 - (void)capsuleTapped:(UIButton *)sender;
 - (void)zoomSliderChanged:(UISlider *)slider;
 - (void)maximizeTapped:(UIButton *)sender;
+- (void)landscapeTapped:(UIButton *)sender;
 - (void)closeButtonTapped:(UIButton *)sender;
 - (void)startButtonTapped:(UIButton *)sender;
 @end
@@ -1775,33 +1808,46 @@ static void LayoutCapsuleForPane(int index)
 // and the drag handlers so the toolbar follows the pane while it moves.
 static void LayoutToolbarForPane(int index)
 {
-    UIView *tb = gPaneToolbars[index];
-    if (!tb) return;
-    CGRect bf = gPaneBaseFrames[index];
-    CGFloat tbBtnH = 40;
-    CGFloat tbH = tbBtnH * 3 + 6 * 2 + 8;   // handle + maximize/restore + close + gaps + padding (0.1.63)
-    // Default: just outside the pane's RIGHT edge.
-    CGFloat x = CGRectGetMaxX(bf) + 3;
-    UIView *host = tb.superview;
-    if (host && CGRectGetMaxX(bf) + 3 + TOOLBAR_WIDTH > host.bounds.size.width) {
-        // 0.1.61: pane zoomed beyond the right edge — mirror the toolbar to
-        // the pane's LEFT outside edge so the handle/close stay usable.
-        x = CGRectGetMinX(bf) - 3 - TOOLBAR_WIDTH;
-    }
-    tb.frame = CGRectMake(x,
-                          CGRectGetMidY(bf) - tbH / 2.0,
-                          TOOLBAR_WIDTH, tbH);
-    if (gDragHandles[index]) {
-        gDragHandles[index].frame = CGRectMake(3, 4, TOOLBAR_WIDTH - 6, tbBtnH);
-    }
-    if (gMaximizeButtons[index]) {
-        gMaximizeButtons[index].frame = CGRectMake(3, 4 + tbBtnH + 6, TOOLBAR_WIDTH - 6, tbBtnH);
-    }
-    if (gCloseButtons[index]) {
-        gCloseButtons[index].frame = CGRectMake(3, 4 + (tbBtnH + 6) * 2, TOOLBAR_WIDTH - 6, tbBtnH);
-    }
-    tb.hidden = gPaneClosed[index];
-    [tb.superview bringSubviewToFront:tb];
+UIView *tb = gPaneToolbars[index];
+if (!tb) return;
+CGRect bf = gPaneBaseFrames[index];
+// 0.1.64: 4 buttons — drag handle, landscape/portrait toggle,
+// maximize/restore, close ×. Slightly smaller buttons to keep the
+// toolbar about the same height as the old 3-button bar (146 vs 140).
+CGFloat tbBtnH = 30;
+CGFloat tbH = tbBtnH * 4 + 6 * 3 + 8;
+// Default: just outside the pane's RIGHT edge.
+CGFloat x = CGRectGetMaxX(bf) + 3;
+UIView *host = tb.superview;
+if (host && CGRectGetMaxX(bf) + 3 + TOOLBAR_WIDTH > host.bounds.size.width) {
+// 0.1.61: pane zoomed beyond the right edge — mirror the toolbar to
+// the pane's LEFT outside edge so the handle/close stay usable.
+x = CGRectGetMinX(bf) - 3 - TOOLBAR_WIDTH;
+}
+tb.frame = CGRectMake(x,
+CGRectGetMidY(bf) - tbH / 2.0,
+TOOLBAR_WIDTH, tbH);
+if (gDragHandles[index]) {
+gDragHandles[index].frame = CGRectMake(3, 4, TOOLBAR_WIDTH - 6, tbBtnH);
+}
+// 0.1.64: sync the toggle label — the state is restored by
+// LoadPaneLayoutState (before Layout runs) after the buttons are created.
+if (gLandscapeButtons[index]) {
+NSString *landTitle = gPaneLandscape[index] ? @"竖屏" : @"横屏";
+[gLandscapeButtons[index] setTitle:landTitle forState:UIControlStateNormal];
+[gLandscapeButtons[index] setTitle:landTitle forState:UIControlStateHighlighted];
+}
+if (gLandscapeButtons[index]) {
+gLandscapeButtons[index].frame = CGRectMake(3, 4 + (tbBtnH + 6), TOOLBAR_WIDTH - 6, tbBtnH);
+}
+if (gMaximizeButtons[index]) {
+gMaximizeButtons[index].frame = CGRectMake(3, 4 + (tbBtnH + 6) * 2, TOOLBAR_WIDTH - 6, tbBtnH);
+}
+if (gCloseButtons[index]) {
+gCloseButtons[index].frame = CGRectMake(3, 4 + (tbBtnH + 6) * 3, TOOLBAR_WIDTH - 6, tbBtnH);
+}
+tb.hidden = gPaneClosed[index];
+[tb.superview bringSubviewToFront:tb];
 }
 
 // 0.1.58: transient toast at the top of the overlay — visible feedback when a
@@ -1983,15 +2029,13 @@ static void ShowToast(NSString *text)
         return;
     }
 
-    // Maximize: height = host height, width = height / phone aspect.
+    // Maximize: height = host height, width follows the pane aspect
+    // (0.1.64: landscape panes use the flipped phone ratio).
     UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
     if (!host) return;
     CGRect bounds = host.bounds;
     if (bounds.size.height <= 0) return;
-    CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
-    CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
-    if (phoneW <= 0) phoneW = 1;
-    CGFloat paneAspect = phoneH / phoneW;
+    CGFloat paneAspect = PaneAspect(paneIndex);
     CGFloat baseW = MAX(floor(bounds.size.width / 5.0) * AppSizeForIndex(paneIndex), 60);
     CGFloat baseH = baseW * paneAspect;
     if (baseH > bounds.size.height) baseH = bounds.size.height;
@@ -2005,6 +2049,23 @@ static void ShowToast(NSString *text)
     [sender setTitle:@"还原" forState:UIControlStateNormal];
     [sender setTitle:@"还原" forState:UIControlStateHighlighted];
     CLog(@"zoom: pane[%d] maximized zoom=%.2f", paneIndex, fillZoom);
+}
+
+// 0.1.64: per-pane landscape/portrait toggle. Flips the pane orientation,
+// re-lays out (Layout swaps the base aspect and ApplyPaneOrientation rotates
+// the wrapper), then persists so a reconnect restores the same orientation.
+- (void)landscapeTapped:(UIButton *)sender
+{
+    int paneIndex = (int)sender.tag;
+    if (paneIndex < 0 || paneIndex >= MAX_PANES) return;
+    if (gPaneClosed[paneIndex]) return;
+    if (!gPanes[paneIndex]) return;
+
+    gPaneLandscape[paneIndex] = !gPaneLandscape[paneIndex];
+    CLog(@"land: tap pane[%d] -> %@", paneIndex, gPaneLandscape[paneIndex] ? @"landscape" : @"portrait");
+    Layout();
+    SavePaneLayoutState();
+    CLog(@"land: pane[%d] %@ applied", paneIndex, gPaneLandscape[paneIndex] ? @"landscape (rotate 90°)" : @"portrait");
 }
 
 - (void)handleCapsuleDrag:(UIPanGestureRecognizer *)gesture
@@ -2172,12 +2233,13 @@ static CGFloat PaneMaxZoom(int index)
     if (bounds.size.height <= 0) bounds.size.height = 1;
     CGFloat baseUnit = floor(bounds.size.width / 5.0);
     CGFloat rawW = MAX(baseUnit * AppSizeForIndex(index), 60);
-    // 0.1.61: same phone-aspect sizing as Layout (no letterboxing, no overflow).
-    CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
-    CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
-    if (phoneW <= 0) phoneW = 1;
-    CGFloat paneAspect = phoneH / phoneW;
-    CGFloat rawH = rawW * paneAspect;
+// 0.1.61: same phone-aspect sizing as Layout (no letterboxing, no overflow).
+// 0.1.64: per-pane aspect — landscape panes flip the ratio.
+CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
+CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
+if (phoneW <= 0) phoneW = 1;
+CGFloat paneAspect = PaneAspect(index);
+CGFloat rawH = rawW * paneAspect;
     if (rawH > bounds.size.height) { rawH = bounds.size.height; rawW = rawH / paneAspect; }
     CGFloat need = MAX(bounds.size.width / rawW, bounds.size.height / rawH);
     CGFloat maxZ = ceil(need * 1.2);  // 20% overflow so "max" always overshoots
@@ -2288,6 +2350,8 @@ static void SavePaneLayoutState(void)
         NSString *kY = [NSString stringWithFormat:@"PaneCenterY%d", index];
         NSString *kZ = [NSString stringWithFormat:@"PaneZoom%d", index];
         NSString *kC = [NSString stringWithFormat:@"PaneClosed%d", index];
+        // 0.1.64: per-pane landscape/portrait state.
+        NSString *kL = [NSString stringWithFormat:@"PaneLandscape%d", index];
 
         // Normalize centers to fractions of the screen.
         CFPreferencesSetAppValue((__bridge CFStringRef)kX,
@@ -2307,6 +2371,10 @@ static void SavePaneLayoutState(void)
                                      gPaneClosed[index] ? kCFBooleanTrue : kCFBooleanFalse,
                                      CFSTR("zp.dashsplit"));
         }
+        // 0.1.64: landscape is part of the layout — persisted in both modes.
+        CFPreferencesSetAppValue((__bridge CFStringRef)kL,
+                                 gPaneLandscape[index] ? kCFBooleanTrue : kCFBooleanFalse,
+                                 CFSTR("zp.dashsplit"));
     }
     CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
     CLog(@"ui: pane layout saved (%d panes)", count);
@@ -2341,8 +2409,11 @@ static void LoadPaneLayoutState(void)
             CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneCenterY%d", index], NULL, CFSTR("zp.dashsplit"));
             CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneZoom%d", index], NULL, CFSTR("zp.dashsplit"));
             CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneClosed%d", index], NULL, CFSTR("zp.dashsplit"));
+            // 0.1.64: rotation belongs to the layout — cleared too.
+            CFPreferencesSetAppValue((__bridge CFStringRef)[NSString stringWithFormat:@"PaneLandscape%d", index], NULL, CFSTR("zp.dashsplit"));
             gPaneZoom[index] = 1.0f;
             gPaneClosed[index] = NO;
+            gPaneLandscape[index] = NO;
             gCapsuleDetached[index] = NO;
         }
         CFPreferencesAppSynchronize(CFSTR("zp.dashsplit"));
@@ -2366,11 +2437,14 @@ static void LoadPaneLayoutState(void)
         NSString *kY = [NSString stringWithFormat:@"PaneCenterY%d", index];
         NSString *kZ = [NSString stringWithFormat:@"PaneZoom%d", index];
         NSString *kC = [NSString stringWithFormat:@"PaneClosed%d", index];
+        // 0.1.64: per-pane landscape/portrait state.
+        NSString *kL = [NSString stringWithFormat:@"PaneLandscape%d", index];
 
         id vX = Pref(kX);
         id vY = Pref(kY);
         id vZ = Pref(kZ);
         id vC = Pref(kC);
+        id vL = Pref(kL);
 
         CGFloat cx = 0, cy = 0;
         BOOL hasCenter = [vX isKindOfClass:[NSNumber class]] && [vY isKindOfClass:[NSNumber class]];
@@ -2421,6 +2495,14 @@ static void LoadPaneLayoutState(void)
         CGFloat paneMaxZ = PaneMaxZoom(index);
         if (gPaneZoom[index] > paneMaxZ) gPaneZoom[index] = paneMaxZ;
         gPaneClosed[index] = closed;
+
+        // 0.1.64: restore the pane orientation (Layout applies it via
+        // ApplyPaneOrientation on the next pass).
+        gPaneLandscape[index] = [vL isKindOfClass:[NSNumber class]] ? [(NSNumber *)vL boolValue] : NO;
+
+        if (gPaneLandscape[index]) {
+            CLog(@"land: pane[%d] restored landscape=1", index);
+        }
 
         if (hasCenter || zoom != 1.0f || closed) {
             CLog(@"ui: pane[%d] restored center={%.2f,%.2f} zoom=%.2f closed=%d",
@@ -2516,7 +2598,7 @@ static void RestoreSlot(int index)
         NSString *bid = HostBundleIDForIndex(index);
         if (bid.length == 0) return;
         CLog(@"restore[%d]: no slot yet — first host of %@", index, bid);
-        gSlots[index] = HostApplication(bid, gPanes[index], index);
+        gSlots[index] = HostApplication(bid, gOrientationViews[index], index);
         return;
     }
     
@@ -2567,7 +2649,7 @@ static void HostAllPanes(BOOL testMode)
             continue;
         }
         [seenBIDs addObject:bid];
-        gSlots[index] = HostApplication(bid, gPanes[index], index);
+        gSlots[index] = HostApplication(bid, gOrientationViews[index], index);
     }
 }
 
@@ -2660,7 +2742,7 @@ static void RestoreNow(void)
         TeardownAllHosts();
         gWindow.hidden = YES;
         gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; gOrientationViews[i] = nil; gLandscapeButtons[i] = nil; gPaneLandscape[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -2822,6 +2904,50 @@ static void InstallLockStateObserver(void)
     }
 }
 
+// 0.1.64: per-pane aspect ratio — height/width. Portrait panes follow the
+// phone screen (tall); landscape panes flip it (wide).
+static CGFloat PaneAspect(int index)
+{
+    CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
+    CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
+    if (phoneW <= 0) phoneW = 1;
+    if (phoneH <= 0) phoneH = 1;
+    if (index >= 0 && index < MAX_PANES && gPaneLandscape[index]) {
+        return phoneW / phoneH;
+    }
+    return phoneH / phoneW;
+}
+
+// 0.1.64: apply the pane's orientation to its rotation wrapper — the same
+// bounds-swap + 90° rotate the test container uses, per pane. In landscape
+// the wrapper reports (H,W) so hosted content fills the rotated pane with no
+// letterboxing (the pane aspect is exactly the phone ratio flipped), and
+// native-fill mode re-layouts the app at the swapped size.
+static void ApplyPaneOrientation(int index)
+{
+    UIView *pane = gPanes[index];
+    UIView *wrapper = gOrientationViews[index];
+    if (!pane || !wrapper) return;
+    CGSize ps = pane.bounds.size;
+    if (ps.width <= 0 || ps.height <= 0) return;
+
+    if (gPaneLandscape[index]) {
+        wrapper.bounds = CGRectMake(0, 0, ps.height, ps.width);
+        wrapper.transform = CGAffineTransformMakeRotation(M_PI_2);  // 90° clockwise
+    } else {
+        wrapper.bounds = CGRectMake(0, 0, ps.width, ps.height);
+        wrapper.transform = CGAffineTransformIdentity;
+    }
+    wrapper.center = CGPointMake(ps.width / 2.0, ps.height / 2.0);
+
+    // Re-fit the hosted app into the (possibly swapped) wrapper — the fit
+    // math reads wrapper.bounds.size, which is exactly the rotated space.
+    HostSlot *slot = gSlots[index];
+    if (slot && slot.viewController) {
+        FitAppViewToContainer(Call0(slot.viewController, @"view"), wrapper);
+    }
+}
+
 static void Layout(void)
 {
     if (!gWindow) return;
@@ -2851,11 +2977,12 @@ static void Layout(void)
     CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
     CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
     if (phoneW <= 0) phoneW = 1;
-    CGFloat paneAspect = phoneH / phoneW;   // height / width of the phone screen
 
     for (int index = 0; index < count; index++) {
         if (gPanes[index]) {
             CGFloat factor = AppSizeForIndex(index);
+            // 0.1.64: per-pane aspect — landscape panes flip the phone ratio.
+            CGFloat paneAspect = PaneAspect(index);
             // Fixed width: baseUnit × size factor, then user zoom (0.1.62).
             CGFloat baseW = MAX(baseUnit * factor, 60);
             CGFloat baseH = baseW * paneAspect;
@@ -2888,6 +3015,7 @@ static void Layout(void)
             }
 
             gPanes[index].frame = baseFrame;
+            ApplyPaneOrientation(index);
             CLog(@"layout: pane[%d] frame=%@ size=%.0f%% zoom=%.2f center={%.0f,%.0f}", index,
                  NSStringFromCGRect(gPanes[index].frame), factor * 100.0,
                  gPaneZoom[index], anchor.x, anchor.y);
@@ -3066,6 +3194,9 @@ static void CreateInterface(BOOL testMode)
         gPaneBaseFrames[i] = CGRectZero;
         gPaneZoom[i] = 1.0f;
         gPaneClosed[i] = NO;
+        gPaneLandscape[i] = NO;   // 0.1.64: reset; LoadPaneLayoutState restores saved state
+        gOrientationViews[i] = nil;
+        gLandscapeButtons[i] = nil;
         if (i < count) {
             CGFloat w0 = MAX(unitW * AppSizeForIndex(i), 60);
             gPaneCenters[i] = CGPointMake(margin + i * (w0 + 12) + w0 / 2.0, hostH / 2.0);
@@ -3085,6 +3216,16 @@ UIColor *paneColor = [UIColor clearColor];
         NSString *title = index < paneTitles.count ? paneTitles[index] : @"加载App……";
         gPanes[index] = MakePane(title, paneColor);
         [addTarget addSubview:gPanes[index]];
+
+        // 0.1.64: per-pane rotation wrapper — always the HostSlot container
+        // (HostAllPanes/RestoreSlot pass THIS view to HostApplication), so
+        // ApplyPaneOrientation's swapped bounds + 90° rotation automatically
+        // drive the fit math. The pane itself keeps its outer frame.
+        UIView *orientationView = [[UIView alloc] initWithFrame:CGRectZero];
+        orientationView.userInteractionEnabled = YES;
+        orientationView.clipsToBounds = NO;
+        [gPanes[index] addSubview:orientationView];
+        gOrientationViews[index] = orientationView;
 
         // 0.1.55+: a long-press anywhere on the pane selects it as the
         // current pane (for the right-edge strip) AND starts dragging it.
@@ -3124,6 +3265,23 @@ UIColor *paneColor = [UIColor clearColor];
         [dragHandle addGestureRecognizer:hPan];
         [toolbar addSubview:dragHandle];
         gDragHandles[index] = dragHandle;
+
+        // 0.1.64: per-pane landscape/portrait toggle (2nd button). Tap flips
+        // this pane's orientation; the title is synced from gPaneLandscape in
+        // LayoutToolbarForPane (also covers the restored-on-reconnect case).
+        UIButton *landscapeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
+        landscapeBtn.frame = CGRectMake(0, 0, TOOLBAR_WIDTH, tbBtnH);
+        [landscapeBtn setTitle:@"横屏" forState:UIControlStateNormal];
+        [landscapeBtn setTitle:@"横屏" forState:UIControlStateHighlighted];
+        landscapeBtn.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        [landscapeBtn setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.85] forState:UIControlStateNormal];
+        [landscapeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
+        landscapeBtn.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.12];
+        landscapeBtn.layer.cornerRadius = 4;
+        landscapeBtn.tag = index;
+        [landscapeBtn addTarget:gDragHandler action:@selector(landscapeTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [toolbar addSubview:landscapeBtn];
+        gLandscapeButtons[index] = landscapeBtn;
 
         UIButton *maximizeBtn = [UIButton buttonWithType:UIButtonTypeCustom];
         maximizeBtn.frame = CGRectMake(0, 0, TOOLBAR_WIDTH, tbBtnH);
@@ -3369,6 +3527,191 @@ UIColor *paneColor = [UIColor clearColor];
     gAutoStartOnCreate = NO;
 }
 
+// ---------------------------------------------------------------------------
+#pragma mark - WiFi auto-join on CarPlay connect (0.1.64)
+// ---------------------------------------------------------------------------
+//
+// When CarPlay connects (wired or wireless) and "WiFi 自动连接" is enabled in
+// Settings, SpringBoard opens Wi-Fi and asks the system to join the
+// configured hotspot. Two backends are attempted (ported from CarPlayPlus):
+//   1) WiFiManagerClient (private C API) — adds the network to the known
+//      list and flags it `joinOnce` so the system joins right away.
+//   2) NEHotspotConfigurationManager — public API used as a fallback.
+// Verification: the current SSID is re-read after the join and matched
+// against the target, so the log proves whether the join took effect.
+
+typedef struct __WiFiManagerClient *WiFiManagerClientRef;
+typedef struct __WiFiNetwork *WiFiNetworkRef;
+
+typedef WiFiManagerClientRef (*DashWiFiClientCreateFn)(CFAllocatorRef, int);
+typedef void (*DashWiFiClientSetPowerFn)(WiFiManagerClientRef, bool);
+typedef WiFiNetworkRef (*DashWiFiClientGetNetworkFn)(WiFiManagerClientRef, CFStringRef);
+typedef void (*DashWiFiClientAddNetworkFn)(WiFiManagerClientRef, WiFiNetworkRef);
+typedef void (*DashWiFiClientSetNetworkPropertyFn)(WiFiManagerClientRef, WiFiNetworkRef, CFStringRef, CFTypeRef);
+typedef CFMutableDictionaryRef (*DashWiFiNetworkCreateFn)(CFAllocatorRef, CFDictionaryRef);
+typedef void (*DashWiFiNetworkSetPropertyFn)(WiFiNetworkRef, CFStringRef, CFTypeRef);
+
+static WiFiManagerClientRef (*sDashWiFiClientCreate)(CFAllocatorRef, int);
+static void (*sDashWiFiClientSetPower)(WiFiManagerClientRef, bool);
+static WiFiNetworkRef (*sDashWiFiClientGetNetwork)(WiFiManagerClientRef, CFStringRef);
+static void (*sDashWiFiClientAddNetwork)(WiFiManagerClientRef, WiFiNetworkRef);
+static void (*sDashWiFiClientSetNetworkProperty)(WiFiManagerClientRef, WiFiNetworkRef, CFStringRef, CFTypeRef);
+static CFMutableDictionaryRef (*sDashWiFiNetworkCreate)(CFAllocatorRef, CFDictionaryRef);
+static void (*sDashWiFiNetworkSetProperty)(WiFiNetworkRef, CFStringRef, CFTypeRef);
+
+static BOOL DashWiFiLoadSymbols(void)
+{
+    static BOOL loaded = NO;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSArray *paths = @[
+            @"/System/Library/PrivateFrameworks/WiFiManager.framework/WiFiManager",
+            @"/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi",
+        ];
+        for (NSString *path in paths) {
+            void *handle = dlopen(path.UTF8String, RTLD_NOW);
+            if (!handle) continue;
+            sDashWiFiClientCreate          = (DashWiFiClientCreateFn)dlsym(handle, "WiFiManagerClientCreate");
+            sDashWiFiClientSetPower        = (DashWiFiClientSetPowerFn)dlsym(handle, "WiFiManagerClientSetPower");
+            sDashWiFiClientGetNetwork      = (DashWiFiClientGetNetworkFn)dlsym(handle, "WiFiManagerClientGetNetwork");
+            sDashWiFiClientAddNetwork      = (DashWiFiClientAddNetworkFn)dlsym(handle, "WiFiManagerClientAddNetwork");
+            sDashWiFiClientSetNetworkProperty = (DashWiFiClientSetNetworkPropertyFn)dlsym(handle, "WiFiManagerClientSetNetworkProperty");
+            sDashWiFiNetworkCreate         = (DashWiFiNetworkCreateFn)dlsym(handle, "WiFiNetworkCreate");
+            sDashWiFiNetworkSetProperty    = (DashWiFiNetworkSetPropertyFn)dlsym(handle, "WiFiNetworkSetProperty");
+            if (sDashWiFiClientCreate && sDashWiFiClientAddNetwork) {
+                loaded = YES;
+                break;
+            }
+        }
+        if (!loaded) {
+            CLog(@"wifi: WiFiManagerClient symbols not found — fallback path only");
+        }
+    });
+    return loaded;
+}
+
+// Current connected SSID (en0). Used by the verify logs to prove the join.
+static NSString *DashWiFiCurrentSSID(void)
+{
+#if __has_include(<SystemConfiguration/CaptiveNetwork.h>)
+    NSDictionary *ifs = (__bridge_transfer NSDictionary *)CNCopyCurrentNetworkInfo(CFSTR("en0"));
+    NSString *ssid = ifs[(__bridge NSString *)kCNNetworkInfoKeySSID];
+    return [ssid isKindOfClass:[NSString class]] ? ssid : @"";
+#else
+    return @"";
+#endif
+}
+
+static void DashWiFiJoinNetwork(NSString *ssid, NSString *password)
+{
+    if (!ssid.length) return;
+
+    // 1) Make sure Wi-Fi is turned on (SpringBoard controls it).
+    @try {
+        id wifiMgr = [NSClassFromString(@"SBWiFiManager") performSelector:@selector(sharedInstance)];
+        if (wifiMgr && [wifiMgr respondsToSelector:NSSelectorFromString(@"setWiFiEnabled:")]) {
+            ((void (*)(id, SEL, BOOL))objc_msgSend)(wifiMgr, NSSelectorFromString(@"setWiFiEnabled:"), YES);
+        }
+    } @catch (NSException *e) {}
+
+    // 2) Primary path: WiFiManagerClient private API (add + joinOnce).
+    if (DashWiFiLoadSymbols()) {
+        WiFiManagerClientRef client = sDashWiFiClientCreate(kCFAllocatorDefault, 0);
+        if (!client) {
+            CLog(@"wifi: failed to create WiFiManagerClient");
+            return;
+        }
+        if (sDashWiFiClientSetPower) sDashWiFiClientSetPower(client, true);
+
+        CFStringRef ssidRef = (__bridge CFStringRef)ssid;
+        WiFiNetworkRef net = sDashWiFiClientGetNetwork ? sDashWiFiClientGetNetwork(client, ssidRef) : NULL;
+        BOOL added = NO;
+        if (!net && ssid.length) {
+            NSMutableDictionary *props = [NSMutableDictionary dictionary];
+            props[@"SSID"] = ssid;
+            if (password.length) props[@"Password"] = password;
+            CFMutableDictionaryRef propsRef = sDashWiFiNetworkCreate
+                ? sDashWiFiNetworkCreate(kCFAllocatorDefault, (__bridge CFDictionaryRef)props)
+                : NULL;
+            if (propsRef) {
+                sDashWiFiClientAddNetwork(client, (WiFiNetworkRef)propsRef);
+                added = YES;
+                if (sDashWiFiClientGetNetwork) net = sDashWiFiClientGetNetwork(client, ssidRef);
+                CFRelease(propsRef);
+            }
+        }
+        if (net) {
+            if (sDashWiFiClientSetNetworkProperty)
+                sDashWiFiClientSetNetworkProperty(client, net, CFSTR("joinOnce"), kCFBooleanTrue);
+            if (sDashWiFiNetworkSetProperty)
+                sDashWiFiNetworkSetProperty(net, CFSTR("remember"), kCFBooleanTrue);
+        }
+        CLog(@"wifi: join \"%@\" added=%d known=%s", ssid, added, net ? "yes" : "no");
+        CFRelease(client);
+        return;
+    }
+
+    // 3) Fallback: public NEHotspotConfiguration API.
+    @try {
+        dlopen("/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension", RTLD_NOW);
+        Class cfgClass = NSClassFromString(@"NEHotspotConfiguration");
+        Class mgrClass = NSClassFromString(@"NEHotspotConfigurationManager");
+        if (cfgClass && mgrClass) {
+            id instance = ((id (*)(id, SEL))objc_msgSend)((id)cfgClass, NSSelectorFromString(@"alloc"));
+            if (instance) {
+                id cfg = ((id (*)(id, SEL, id, id, BOOL))objc_msgSend)(
+                    instance, NSSelectorFromString(@"initWithSSID:passphrase:isWEP:"),
+                    ssid, password.length ? password : nil, NO);
+                if (!cfg) return;
+                id manager = ((id (*)(id, SEL))objc_msgSend)((id)mgrClass, NSSelectorFromString(@"sharedManager"));
+                if (manager) {
+                    ((void (*)(id, SEL, id, id))objc_msgSend)(
+                        manager, NSSelectorFromString(@"applyConfiguration:completionHandler:"), cfg,
+                        ^(NSError *error) {
+                            CLog(@"wifi: NEHotspot fallback apply \"%@\" error=%@", ssid, error);
+                        });
+                }
+            }
+        }
+    } @catch (NSException *e) {
+        CLog(@"wifi: NEHotspot fallback failed: %@", e);
+    }
+}
+
+// Previous connection state for the rising-edge detector in Tick.
+static BOOL gCarPlayPrevConnected = NO;
+
+// Called on the CarPlay-connect rising edge (Tick) and by the wifitest
+// marker. Delays briefly so the network stack settles, then joins and
+// verifies the result at +5s/+10s.
+static void WiFiHandleCarPlayConnected(void)
+{
+    if (!PrefBool(kPrefsWifiAutoJoin, NO)) {
+        CLog(@"wifi: carplay connected — autojoin disabled, skipping");
+        return;
+    }
+    NSString *ssid = PrefString(kPrefsWifiSSID);
+    if (!ssid.length) {
+        CLog(@"wifi: carplay connected — no SSID configured, skipping");
+        return;
+    }
+    NSString *password = PrefString(kPrefsWifiPassword) ?: @"";
+    CLog(@"wifi: carplay connected — autojoin enabled=1 ssid=\"%@\"", ssid);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        DashWiFiJoinNetwork(ssid, password);
+        // Verification — did the phone actually join the target network?
+        // Field logs: wifi: verify t+5s current="..." matched=1/0.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            NSString *cur = DashWiFiCurrentSSID();
+            CLog(@"wifi: verify t+5s current=\"%@\" target=\"%@\" matched=%d", cur, ssid, [cur isEqualToString:ssid]);
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(7.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            NSString *cur = DashWiFiCurrentSSID();
+            CLog(@"wifi: verify t+10s current=\"%@\" target=\"%@\" matched=%d", cur, ssid, [cur isEqualToString:ssid]);
+        });
+    });
+}
+
 #pragma mark - Lifecycle
 
 static BOOL Disabled(void)
@@ -3451,6 +3794,13 @@ static void Tick(void)
     @try {
         BOOL carConnected = CarScreenConnected();
         BOOL testMode = (!carConnected && TestModeEnabled());
+
+        // 0.1.64: rising edge of the CarPlay connection triggers the WiFi
+        // auto-join (wired & wireless both count; one shot per connection).
+        if (carConnected && !gCarPlayPrevConnected) {
+            WiFiHandleCarPlayConnected();
+        }
+        gCarPlayPrevConnected = carConnected;
         
         // 0.1.23: timestamp the (re)connect — the settle window for the
         // CarPlay setup wave runs from here. Rebuild ticks enter with a
@@ -3468,7 +3818,7 @@ static void Tick(void)
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; gOrientationViews[i] = nil; gLandscapeButtons[i] = nil; gPaneLandscape[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3495,7 +3845,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; gOrientationViews[i] = nil; gLandscapeButtons[i] = nil; gPaneLandscape[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3520,7 +3870,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; gOrientationViews[i] = nil; gLandscapeButtons[i] = nil; gPaneLandscape[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3544,7 +3894,7 @@ gCurrentPane = -1;
                 TeardownAllHosts();
                 gWindow.hidden = YES;
                 gWindow = nil;
-for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; }
+for (int i = 0; i < MAX_PANES; i++) { gPanes[i] = nil; gDragHandles[i] = nil; gCloseButtons[i] = nil; gMaximizeButtons[i] = nil; gPaneToolbars[i] = nil; gPaneBaseFrames[i] = CGRectZero; gPaneZoom[i] = 1.0f; gPaneCenters[i] = CGPointZero; gMaximized[i] = NO; gOrientationViews[i] = nil; gLandscapeButtons[i] = nil; gPaneLandscape[i] = NO; }
 for (int i = 0; i < MAX_PANES; i++) gDividers[i] = nil;
 gTestContainer = nil;
 gToggleButton = nil;
@@ -3619,7 +3969,7 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
         
-        CLog(@"--- DashSplit 0.1.63 loaded ---");
+        CLog(@"--- DashSplit 0.1.64 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
@@ -3664,6 +4014,15 @@ static void DashSplitInit(void)
                 Tick();
             }];
             [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+
+            // 0.1.64: no car handy? Create the wifitest marker file and one
+            // auto-join fires on boot, exercising the join path + verify logs.
+            if (FileExists(@COCKPIT_WIFITEST)) {
+                CLog(@"wifi: wifitest marker found — triggering one auto-join in 5s");
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    WiFiHandleCarPlayConnected();
+                });
+            }
         });
     }
 }
