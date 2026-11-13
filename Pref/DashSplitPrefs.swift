@@ -19,7 +19,7 @@ private let keyWifiSSID = "WifiSSID"
 private let keyWifiPassword = "WifiPassword"
 
 // Tweak version shown in the settings pane.
-private let tweakVersion = "0.1.67"
+private let tweakVersion = "0.1.68"
 
 private let prefsDomain = "zp.dashsplit" as CFString
 

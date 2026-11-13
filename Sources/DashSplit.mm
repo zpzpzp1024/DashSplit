@@ -2114,6 +2114,12 @@ static void ShowToast(NSString *text)
         HostSlot *slot = gSlots[paneIndex];
         if (slot && slot.viewController && slot.bundleID.length) {
             NSString *bid = slot.bundleID;
+            // 0.1.68: shut the UIScreen bounds hook BEFORE tearing down — a
+            // leftover landscape hook made the re-hosted app lay out at the
+            // old wide pane size in its first frames (screens got scrambled
+            // after quick landscape/portrait cycles).
+            gNativeFillActive = NO;
+            gNativeFillSizes[paneIndex] = CGSizeZero;
             TeardownSlot(slot);
             gSlots[paneIndex] = nil;
             CLog(@"land: pane[%d] portrait — re-hosting %@ for a clean layout", paneIndex, bid);
@@ -3003,6 +3009,23 @@ static void ApplyPaneOrientation(int index)
     HostSlot *slot = gSlots[index];
     if (slot && slot.viewController) {
         FitAppViewToContainer(Call0(slot.viewController, @"view"), wrapper);
+    }
+
+    // 0.1.68: the scene's content layer re-lays out asynchronously on the app
+    // side — re-assert the landscape reference & fit twice so apps that take a
+    // moment to respond (VLC etc.) end up wide instead of a cropped portrait
+    // frame. Guarded so a fast switch back to portrait cancels the re-assert.
+    if (gPaneLandscape[index] && slot && slot.viewController) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (index >= 0 && index < MAX_PANES && gSlots[index] == slot && gPaneLandscape[index]) {
+                FitAppViewToContainer(Call0(slot.viewController, @"view"), wrapper);
+            }
+        });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (index >= 0 && index < MAX_PANES && gSlots[index] == slot && gPaneLandscape[index]) {
+                FitAppViewToContainer(Call0(slot.viewController, @"view"), wrapper);
+            }
+        });
     }
 }
 
