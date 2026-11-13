@@ -747,6 +747,11 @@ static void SlotSetMode(int index, NSInteger mode)
     }
 }
 
+// 0.1.65: gPaneLandscape is declared here (before the hosting code) so
+// ConfigureAppViewController / FitAppViewToContainer can pick the scene's
+// reference orientation from the pane's persisted landscape state.
+static BOOL gPaneLandscape[MAX_PANES];
+
 #pragma mark - Scene foreground assertion filter
 
 // Hosting an app scene from our own window makes SpringBoard raise
@@ -1047,7 +1052,7 @@ static void ApplyDisplayMode4(id viewController)
 // based revert (isRunning stays 0 on this device even while content renders,
 // and the revert killed working displays ~8s in). Recovery is the health
 // check's job: nudge, then re-host.
-static void ConfigureAppViewController(id viewController, id entity, id application, CGSize paneSize)
+static void ConfigureAppViewController(int index, id viewController, id entity, id application, CGSize paneSize)
 {
     (void)application;
     
@@ -1088,7 +1093,12 @@ static void ConfigureAppViewController(id viewController, id entity, id applicat
         if (sceneView) {
             SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
             if ([sceneView respondsToSelector:refSizeSel]) {
-                NSInteger orientation = 1; // UIInterfaceOrientationPortrait
+                // 0.1.65: landscape panes request a LANDSCAPE scene layout so
+                // apps like VLC reflow wide in the pane (video fills it)
+                // instead of rendering portrait content that gets rotated.
+                NSInteger orientation = (index >= 0 && index < MAX_PANES && gPaneLandscape[index])
+                    ? 4 /* UIInterfaceOrientationLandscapeRight */
+                    : 1 /* UIInterfaceOrientationPortrait */;
                 ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
                 CLog(@"host: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
             } else {
@@ -1263,7 +1273,12 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         if (sceneView) {
             SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
             if ([sceneView respondsToSelector:refSizeSel]) {
-                NSInteger orientation = 1; // UIInterfaceOrientationPortrait
+                // 0.1.65: landscape panes send a LANDSCAPE reference so the
+                // app lays out wide (VLC video widens) instead of portrait
+                // content being rotated afterwards.
+                NSInteger orientation = (paneIndex >= 0 && paneIndex < MAX_PANES && gPaneLandscape[paneIndex])
+                    ? 4 /* UIInterfaceOrientationLandscapeRight */
+                    : 1 /* UIInterfaceOrientationPortrait */;
                 ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
                 CLog(@"fit: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
             }
@@ -1377,9 +1392,10 @@ static CGFloat gMaximizePrevZoom[MAX_PANES];
 static CGPoint gMaximizePrevCenter[MAX_PANES];
 
 // 0.1.64: per-pane orientation — gPaneLandscape flips the pane to landscape
-// aspect; gOrientationViews (always the HostSlot container) carries the 90°
-// rotation so hosted content fills the rotated pane exactly.
-static BOOL gPaneLandscape[MAX_PANES];
+// aspect; gOrientationViews (always the HostSlot container) hosts the app.
+// (0.1.65: in native-fill mode the wrapper carries NO rotation — the scene
+// itself re-lays out landscape, so content is never turned sideways.)
+// gPaneLandscape itself is declared earlier, near the hosting code.
 static UIView *gOrientationViews[MAX_PANES];
 static UIButton *gLandscapeButtons[MAX_PANES];
 
@@ -1566,7 +1582,7 @@ static HostSlot *HostApplication(NSString *bundleID, UIView *container, int slot
     }
     slot.viewController = viewController;
     
-    ConfigureAppViewController(viewController, entity, application, container.bounds.size);
+    ConfigureAppViewController(slotIndex, viewController, entity, application, container.bounds.size);
     
     UIView *appView = Call0(viewController, @"view");
     if (!appView) {
@@ -2065,7 +2081,7 @@ static void ShowToast(NSString *text)
     CLog(@"land: tap pane[%d] -> %@", paneIndex, gPaneLandscape[paneIndex] ? @"landscape" : @"portrait");
     Layout();
     SavePaneLayoutState();
-    CLog(@"land: pane[%d] %@ applied", paneIndex, gPaneLandscape[paneIndex] ? @"landscape (rotate 90°)" : @"portrait");
+    CLog(@"land: pane[%d] %@ applied", paneIndex, gPaneLandscape[paneIndex] ? @"landscape" : @"portrait");
 }
 
 - (void)handleCapsuleDrag:(UIPanGestureRecognizer *)gesture
@@ -2917,11 +2933,13 @@ static CGFloat PaneAspect(int index)
     return phoneH / phoneW;
 }
 
-// 0.1.64: apply the pane's orientation to its rotation wrapper — the same
-// bounds-swap + 90° rotate the test container uses, per pane. In landscape
-// the wrapper reports (H,W) so hosted content fills the rotated pane with no
-// letterboxing (the pane aspect is exactly the phone ratio flipped), and
-// native-fill mode re-layouts the app at the swapped size.
+// 0.1.64: apply the pane's orientation to its wrapper.
+// 0.1.65: in native-fill (mode 2) the wrapper is NEVER rotated — the pane
+// itself is already wide in landscape (PaneAspect flips the phone ratio) and
+// FitAppViewToContainer tells the scene to lay out wide with a landscape
+// orientation, so the app reflows on its own (VLC video widens). Transform
+// modes (0/1) keep the bounds-swap + 90° rotate as a fallback since their
+// scene content stays phone-portrait sized.
 static void ApplyPaneOrientation(int index)
 {
     UIView *pane = gPanes[index];
@@ -2930,7 +2948,17 @@ static void ApplyPaneOrientation(int index)
     CGSize ps = pane.bounds.size;
     if (ps.width <= 0 || ps.height <= 0) return;
 
-    if (gPaneLandscape[index]) {
+    if (FitMode() == 2) {
+        // 0.1.65: native-fill TRUE landscape. The pane itself is already wide
+        // in landscape (PaneAspect flips the ratio), and FitAppViewToContainer
+        // re-lays the scene out at the wide size with a landscape reference
+        // orientation — the app reflows by itself (VLC video widens), so no
+        // rotation transform is needed and nothing is turned sideways.
+        wrapper.bounds = CGRectMake(0, 0, ps.width, ps.height);
+        wrapper.transform = CGAffineTransformIdentity;
+    } else if (gPaneLandscape[index]) {
+        // Transform modes (0/1): scene content is phone-portrait sized, so the
+        // best we can do is spin the portrait canvas inside the wide pane.
         wrapper.bounds = CGRectMake(0, 0, ps.height, ps.width);
         wrapper.transform = CGAffineTransformMakeRotation(M_PI_2);  // 90° clockwise
     } else {
