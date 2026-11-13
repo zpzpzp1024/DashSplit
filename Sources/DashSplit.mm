@@ -2235,11 +2235,10 @@ static CGFloat PaneMaxZoom(int index)
     CGFloat rawW = MAX(baseUnit * AppSizeForIndex(index), 60);
 // 0.1.61: same phone-aspect sizing as Layout (no letterboxing, no overflow).
 // 0.1.64: per-pane aspect — landscape panes flip the ratio.
-CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
-CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
-if (phoneW <= 0) phoneW = 1;
-CGFloat paneAspect = PaneAspect(index);
-CGFloat rawH = rawW * paneAspect;
+    CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
+    if (phoneW <= 0) phoneW = 1;
+    CGFloat paneAspect = PaneAspect(index);
+    CGFloat rawH = rawW * paneAspect;
     if (rawH > bounds.size.height) { rawH = bounds.size.height; rawW = rawH / paneAspect; }
     CGFloat need = MAX(bounds.size.width / rawW, bounds.size.height / rawH);
     CGFloat maxZ = ceil(need * 1.2);  // 20% overflow so "max" always overshoots
@@ -2975,7 +2974,6 @@ static void Layout(void)
     // from width; if that would exceed the host, scale down keeping the ratio
     // (so panes never overflow in landscape CarPlay).
     CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
-    CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
     if (phoneW <= 0) phoneW = 1;
 
     for (int index = 0; index < count; index++) {
