@@ -5,12 +5,12 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 > English version: [README.en.md](README.en.md)
 
 - **包名**：`zp.dashsplit`
-- **当前版本**：0.1.65 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
+- **当前版本**：0.1.66 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
 - **宿主模式参考**：[carplay-cast](https://github.com/EthanArbuckle/carplay-cast)（Apache-2.0）
 
 ---
 
-## 功能特性（0.1.65）
+## 功能特性（0.1.66）
 
 1. **多应用分屏**：在系统设置「车载分屏」里勾选要上车的 App（最多 8 个，逗号分隔保存为 `SelectedApps`），连接 CarPlay 后同时出现在车机上；**已勾选的 App 在列表中置顶分组显示**（方便取消勾选），勾选顺序即分屏从左到右的顺序，置顶不影响分屏顺序。
 2. **每面板右侧外部工具条**：每个面板**外侧右侧竖排 2 个按钮**——上：**拖动把手**（按住上下左右拖动该面板）；下：**关闭 ×**（收起面板变胶囊）。工具条紧贴面板外缘、随面板移动/缩放，**不遮盖 app 任何区域**。
@@ -31,7 +31,7 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 14. **分屏无黑边（0.1.61+）**：每个分屏面板的**宽高比＝手机屏幕比例**，App 内容等比缩放后**正好填满面板，上下不再留黑边**（不变形、不裁切）；面板高度超出屏幕时按相同比例自动缩小，横屏车机也不会溢出。
 15. **工具条防丢（0.1.61+）**：面板放大导致右侧工具条（拖动把手 + 关闭 ×）伸出屏幕右边界时，工具条**自动翻转到面板左外侧**，始终保持可用。
 16. **单一「大小」滑杆（0.1.62+）**：设置里每个 App 原「占比（1-5）+ 缩放（10-100）」合并为一个**连续「大小」滑杆（10-600，100=默认宽度 1/5 屏宽）**，小于 100 缩小、大于 100 放大（最大 6 倍）；旧的占比×缩放设置**自动迁移**合并成对应的大小值。
-17. **面板横屏/竖屏切换（0.1.64+）**：每个面板工具条新增**横屏↔竖屏**按钮，点哪个转哪个、各面板独立。横屏时面板宽高比翻转为横屏比例；**0.1.65 起在「原生填充」模式下 App 按横向重新布局（场景参考尺寸 + landscape 方向），画面变宽——视频类 App（如 VLC）的视频直接变宽铺满，整个画面不再被旋转**；「拉伸/等比缩放」模式保留旋转 90° 铺满兑底。状态与位置/缩放一起持久化，重连车机自动恢复。
+17. **面板横屏/竖屏切换（0.1.64+）**：每个面板工具条新增**横屏↔竖屏**按钮，点哪个转哪个、各面板独立。横屏时面板宽高比翻转为横屏比例；**0.1.66 起无论「等比缩放」还是「拉伸填满」模式，App 都按横向重新布局（场景参考尺寸 + landscape 方向）——画面直接变宽，视频类 App（如 VLC）的视频变宽铺满，整个画面不再被旋转**。状态与位置/缩放一起持久化，重连车机自动恢复。
 18. **WiFi 自动连接（0.1.64+）**：设置里配置“热点名称(SSID) + 密码（可留空）”，开启后**检测到 CarPlay 连接（有线/无线）自动连接该热点**——主路径 WiFiManagerClient 私有 API（添加网络 + joinOnce 立即加入），兑底 NEHotspotConfigurationManager。连接后 +5s/+10s 写入验证日志 `wifi: verify ... matched=1` 即判定生效；无车机时创建 `/var/mobile/Library/Preferences/zp.dashsplit.wifitest` 可在启动 5 秒后触发一次用于测试。
 
 ---
@@ -75,7 +75,7 @@ killall -9 SpringBoard
 
 ```powershell
 ./deploy.ps1 -Device 192.168.1.23 -Latest        # 安装最新 release
-./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.65_iphoneos-arm64.deb
+./deploy.ps1 -Device 192.168.1.23 -Deb .\packages\zp.dashsplit_0.1.66_iphoneos-arm64.deb
 ./deploy.ps1 -Device 192.168.1.23 -LogOnly -Follow # 实时跟日志
 ```
 
@@ -158,7 +158,7 @@ done | grep -i didi   # 替换为要查的 App 关键字
 - `host: ...`：宿主 App 的每一步
 - `ui: pane[0] restored off={...} zoom=... closed=...`：布局恢复
 - `zoom: pane[1] +0.20 -> 1.40`：缩放事件
-- `land: pane[0] → landscape`：面板横屏切换（0.1.64；0.1.65 起原生填充模式为横向重排，不再旋转画面）
+- `land: pane[0] → landscape`：面板横屏切换（0.1.64；0.1.66 起任意模式都是横向重排，不再旋转画面）
 - `wifi: carplay connected — autojoin enabled=1 ssid="..."`：CarPlay 连接触发自动连（0.1.64）
 - `wifi: join "..." added=1 known=yes`：加入结果（0.1.64）
 - `wifi: verify t+5s current="..." target="..." matched=1`：**生效验证——matched=1 即连接成功**（0.1.64）
@@ -183,6 +183,8 @@ make package FINALPACKAGE=1
 ---
 
 ## 版本记录（摘要）
+
+- **0.1.66**：**真横屏与渲染模式解耦**——修复 0.1.65 依赖「原生填充」模式才能真横屏的问题（设置页该模式选项已移除，实际只有等比缩放/拉伸填满）：新增 `EffectiveFit`，横屏面板**无条件**走场景横向重排（`_updateReferenceSize:andOrientation:` 传横向尺寸 + landscape），无论用户选哪种显示模式，VLC 等 App 都按横向重新布局、视频变宽，画面不再被旋转；切回竖屏自动还原 app 尺寸与等比/拉伸适配。
 
 - **0.1.65**：**横屏改为真横屏**——修复 0.1.64「整个画面逆时针旋转 90°」的问题：原生填充模式下把场景参考尺寸改为横向（宽>高）并传 landscape 方向（`_updateReferenceSize:andOrientation:` orientation=4），App 自己重排为横屏，视频内容变宽铺满、画面不再被旋转；非原生填充（拉伸/等比缩放）模式保留旋转兑底。
 

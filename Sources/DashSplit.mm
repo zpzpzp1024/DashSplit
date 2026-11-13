@@ -1088,7 +1088,8 @@ static void ConfigureAppViewController(int index, id viewController, id entity, 
     // display mode. The private method _updateReferenceSize:andOrientation: on
     // SBDeviceApplicationSceneView tells the scene to lay out at the given
     // dimensions — discovered via method enumeration on the device.
-    if (FitMode() == 2 && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
+    if ((FitMode() == 2 || (index >= 0 && index < MAX_PANES && gPaneLandscape[index]))
+        && !CGSizeEqualToSize(paneSize, CGSizeZero)) {
         id sceneView = Call0(viewController, @"appView");
         if (sceneView) {
             SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
@@ -1168,6 +1169,19 @@ static void InstallUIScreenHook(void)
     }
 }
 
+// 0.1.66: effective fit mode for a pane. Landscape panes ALWAYS force the
+// native re-layout path (2) regardless of the user's fit mode — that is the
+// only way the app itself reflows landscape (VLC video widens) instead of
+// portrait content being rotated. The fit-mode picker only offers
+// 0=等比缩放 / 1=拉伸填满, so without this, landscape could never re-layout.
+static int EffectiveFit(int paneIndex)
+{
+    if (paneIndex >= 0 && paneIndex < MAX_PANES && gPaneLandscape[paneIndex]) {
+        return 2;
+    }
+    return FitMode();
+}
+
 // Applies the aspect-fit transform that maps the app's phone-sized scene
 // content into its pane. Extracted from ScaleAppViewIntoContainer because it
 // must be RE-applied: the system resets this transform when the scene cycles
@@ -1206,9 +1220,16 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         return;
     }
     
-    int fitMode = FitMode();
+    // 0.1.66: landscape panes force the native re-layout path even when the
+    // user's fit mode is 等比缩放/拉伸填满 — the scene must re-layout wide
+    // for the app itself to go landscape (VLC video widens).
+    int paneIndex = -1;
+    for (int i = 0; i < MAX_PANES; i++) {
+        if (gSlots[i] && gSlots[i].container == container) { paneIndex = i; break; }
+    }
+    int effective = EffectiveFit(paneIndex);
     
-    if (!didMethodDump && fitMode == 2) {
+    if (!didMethodDump && effective == 2) {
         didMethodDump = YES;
         if (sceneView) {
             CLog(@"diag: sceneView class=%@", NSStringFromClass([sceneView class]));
@@ -1238,7 +1259,7 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         }
     }
     
-    if (fitMode == 2) {
+    if (effective == 2) {
         // Native fill — scene content reference size +
         // UIScreen.bounds hook + contentView bounds + layout.
         //
@@ -1250,13 +1271,6 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         // set the scene's content reference size to the pane dimensions,
         // so the App lays out at pane size from the start.
         // Also hook UIScreen.bounds as a fallback for apps that read it directly.
-        int paneIndex = -1;
-        for (int i = 0; i < MAX_PANES; i++) {
-            if (gSlots[i] && gSlots[i].container == container) {
-                paneIndex = i;
-                break;
-            }
-        }
         if (paneIndex < 0) paneIndex = 0;
         gNativeFillCurrentPane = paneIndex;
         gNativeFillSizes[paneIndex] = container.bounds.size;
@@ -1330,8 +1344,14 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
                 }
             }
         }
-    } else if (fitMode == 1) {
+    } else if (effective == 1) {
         gNativeFillActive = NO;
+        // 0.1.66: restore the app to full phone size first — a previous
+        // landscape pass forced the native path and resized the views.
+        appView.frame = CGRectMake(0, 0, phone.width, phone.height);
+        appView.bounds = CGRectMake(0, 0, phone.width, phone.height);
+        contentView.frame = CGRectMake(0, 0, phone.width, phone.height);
+        contentView.bounds = CGRectMake(0, 0, phone.width, phone.height);
         // Non-uniform stretch: scale X and Y independently so the app content
         // fills the entire pane with no letterboxing. The full app UI remains
         // visible (nothing is clipped), but the aspect ratio changes.
@@ -1344,6 +1364,11 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
              scaleX, scaleY, NSStringFromCGSize(container.bounds.size), NSStringFromCGSize(phone));
     } else {
         gNativeFillActive = NO;
+        // 0.1.66: restore the app to full phone size first (see above).
+        appView.frame = CGRectMake(0, 0, phone.width, phone.height);
+        appView.bounds = CGRectMake(0, 0, phone.width, phone.height);
+        contentView.frame = CGRectMake(0, 0, phone.width, phone.height);
+        contentView.bounds = CGRectMake(0, 0, phone.width, phone.height);
         // Aspect-fit: uniform scale so the full app UI fits inside the pane,
         // centered with letterboxing on the axis that doesn't fill.
         CGFloat scale = MIN(container.bounds.size.width / MAX(phone.width, 1),
@@ -1393,8 +1418,8 @@ static CGPoint gMaximizePrevCenter[MAX_PANES];
 
 // 0.1.64: per-pane orientation — gPaneLandscape flips the pane to landscape
 // aspect; gOrientationViews (always the HostSlot container) hosts the app.
-// (0.1.65: in native-fill mode the wrapper carries NO rotation — the scene
-// itself re-lays out landscape, so content is never turned sideways.)
+// (0.1.66: the wrapper carries NO rotation in any fit mode — landscape forces
+// a scene-wide re-layout, so content is never turned sideways.)
 // gPaneLandscape itself is declared earlier, near the hosting code.
 static UIView *gOrientationViews[MAX_PANES];
 static UIButton *gLandscapeButtons[MAX_PANES];
@@ -1411,13 +1436,15 @@ static void AttachPaneDragGesture(UIView *target);
 static CGFloat PaneAspect(int index);
 static void ApplyPaneOrientation(int index);
 
-static void ScaleAppViewIntoContainer(UIView *appView, UIView *container)
+static void ScaleAppViewIntoContainer(UIView *appView, UIView *container, int paneIndex)
 {
     if (!appView || !container) return;
-    int fitMode = FitMode();
+    // 0.1.66: landscape forces the native path, so initial sizing follows the
+    // effective mode (EffectiveFit), not just the user's fit mode.
+    int effective = EffectiveFit(paneIndex);
     CGSize initialSize;
-    if (fitMode == 2) {
-        // Native fill: the appView is sized to the pane, not the phone.
+    if (effective == 2) {
+        // Native fill / landscape: the appView is sized to the pane.
         initialSize = container.bounds.size;
     } else {
         initialSize = [UIScreen mainScreen].bounds.size;
@@ -1598,7 +1625,7 @@ static HostSlot *HostApplication(NSString *bundleID, UIView *container, int slot
     // the app (plain taps still pass through).
     AttachPaneDragGesture(appView);
 
-    ScaleAppViewIntoContainer(appView, container);
+    ScaleAppViewIntoContainer(appView, container, slotIndex);
     
     CLog(@"host: %@ attached", bundleID);
     
@@ -2934,12 +2961,11 @@ static CGFloat PaneAspect(int index)
 }
 
 // 0.1.64: apply the pane's orientation to its wrapper.
-// 0.1.65: in native-fill (mode 2) the wrapper is NEVER rotated — the pane
-// itself is already wide in landscape (PaneAspect flips the phone ratio) and
-// FitAppViewToContainer tells the scene to lay out wide with a landscape
-// orientation, so the app reflows on its own (VLC video widens). Transform
-// modes (0/1) keep the bounds-swap + 90° rotate as a fallback since their
-// scene content stays phone-portrait sized.
+// 0.1.65/0.1.66: the wrapper is never rotated in ANY fit mode. Landscape
+// forces the native re-layout path (EffectiveFit returns 2) — the scene gets
+// a wide reference size + landscape orientation, so the app reflows wide on
+// its own (VLC video widens); the pane itself is already wide in landscape
+// (PaneAspect flips the phone ratio).
 static void ApplyPaneOrientation(int index)
 {
     UIView *pane = gPanes[index];
@@ -2948,23 +2974,13 @@ static void ApplyPaneOrientation(int index)
     CGSize ps = pane.bounds.size;
     if (ps.width <= 0 || ps.height <= 0) return;
 
-    if (FitMode() == 2) {
-        // 0.1.65: native-fill TRUE landscape. The pane itself is already wide
-        // in landscape (PaneAspect flips the ratio), and FitAppViewToContainer
-        // re-lays the scene out at the wide size with a landscape reference
-        // orientation — the app reflows by itself (VLC video widens), so no
-        // rotation transform is needed and nothing is turned sideways.
-        wrapper.bounds = CGRectMake(0, 0, ps.width, ps.height);
-        wrapper.transform = CGAffineTransformIdentity;
-    } else if (gPaneLandscape[index]) {
-        // Transform modes (0/1): scene content is phone-portrait sized, so the
-        // best we can do is spin the portrait canvas inside the wide pane.
-        wrapper.bounds = CGRectMake(0, 0, ps.height, ps.width);
-        wrapper.transform = CGAffineTransformMakeRotation(M_PI_2);  // 90° clockwise
-    } else {
-        wrapper.bounds = CGRectMake(0, 0, ps.width, ps.height);
-        wrapper.transform = CGAffineTransformIdentity;
-    }
+    // 0.1.66: the wrapper is NEVER rotated, in ANY fit mode. Landscape re-lays
+    // out the SCENE itself — FitAppViewToContainer goes through the native
+    // path (EffectiveFit -> 2) with a wide reference size + landscape
+    // orientation, so the app reflows wide on its own (VLC video widens). The
+    // pane is already wide in landscape (PaneAspect flips the ratio).
+    wrapper.bounds = CGRectMake(0, 0, ps.width, ps.height);
+    wrapper.transform = CGAffineTransformIdentity;
     wrapper.center = CGPointMake(ps.width / 2.0, ps.height / 2.0);
 
     // Re-fit the hosted app into the (possibly swapped) wrapper — the fit
