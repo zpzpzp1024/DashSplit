@@ -1,5 +1,28 @@
 // DashSplit - CarPlay split view experiments
 //
+// 0.1.70: landscape one-tap enlarge + crash/scramble fixes (DashSplit-17.log).
+// 1) ROOT CAUSE of the scrambled landscape panes ({655, 896} reference size,
+//    pane half off-screen): PaneAspect() read [UIScreen mainScreen] DIRECTLY,
+//    but the native-fill UIScreen hook had already swapped it to the pane
+//    size ({82, 60}) — the "landscape" branch then produced a PORTRAIT-shaped
+//    aspect (82/60 = 1.37). The physical screen size is now cached once
+//    (gPhysScreenW/H) and every aspect computation uses the cache.
+// 2) One-tap landscape: tapping 横屏 now snaps the pane to a big landscape
+//    window (width fills the available width clear of the control strip,
+//    height follows the landscape aspect, centered) — video enlarges in one
+//    tap, no slider needed. Tapping 竖屏 restores the exact pre-landscape
+//    zoom + center.
+// 3) Layout clamps zoomed frames: a pane bigger than the host centers
+//    symmetrically; otherwise it stays fully visible. No more -271.x panes.
+// 4) Native-fill consistency guard: a LANDSCAPE orientation is never sent
+//    with a portrait-shaped reference size.
+// 5) Crash fix: the pending ApplyModeWhenReady poll re-armed Live mode on a
+//    pane the user had already minimized (it only checked the global
+//    gUserClosed, not gPaneClosed) — the next foreground=No diff aborted
+//    SpringBoard. The poll now aborts for closed panes, minimizing marks the
+//    slot suppressed (health check cannot re-arm it), and the assertion
+//    filter scans ALL pane slots (it was still limited to 0..2).
+//
 // 0.1.64: per-pane 横屏/竖屏 toggle — a 4th toolbar button (land: ...).
 // The pane flips to landscape aspect and the hosted content rotates 90° via
 // a per-pane bounds-swapped wrapper (the same trick the test container uses,
@@ -752,6 +775,27 @@ static void SlotSetMode(int index, NSInteger mode)
 // reference orientation from the pane's persisted landscape state.
 static BOOL gPaneLandscape[MAX_PANES];
 
+// 0.1.70: the PHYSICAL phone screen size, cached whenever the UIScreen
+// bounds hook is known to be inactive (load time, test window creation,
+// teardown). PaneAspect / Layout must never read [UIScreen mainScreen] while
+// the native-fill hook is live — the hook returns the swapped pane size
+// ({82, 60} in landscape), which turned every aspect computation after the
+// first landscape pass into a portrait-shaped ratio (the {655, 896}
+// scrambled panes in DashSplit-17.log).
+static CGFloat gPhysScreenW = 0;
+static CGFloat gPhysScreenH = 0;
+
+static void CachePhysicalScreenSize(void)
+{
+    CGSize s = [UIScreen mainScreen].bounds.size;
+    if (s.width > 0 && s.height > 0) {
+        gPhysScreenW = s.width;
+        gPhysScreenH = s.height;
+    }
+    if (gPhysScreenW <= 0) gPhysScreenW = 375;
+    if (gPhysScreenH <= 0) gPhysScreenH = 812;
+}
+
 #pragma mark - Scene foreground assertion filter
 
 // Hosting an app scene from our own window makes SpringBoard raise
@@ -803,7 +847,12 @@ static BOOL DashSplitShouldSwallow(NSString *name, NSString *reason)
 {
     if (!name || ![name isEqualToString:@"NSInternalInconsistencyException"]) return NO;
     if (![reason containsString:@"foreground status out from underneath us"]) return NO;
-    return (gSlots[0] != nil || gSlots[1] != nil || gSlots[2] != nil);
+    // 0.1.70: scan ALL pane slots — this still only checked 0..2 while
+    // MAX_PANES is 8, leaving the filter blind whenever a later pane hosted.
+    for (int i = 0; i < MAX_PANES; i++) {
+        if (gSlots[i] != nil) return YES;
+    }
+    return NO;
 }
 
 static void DashSplitRaiseInstance(id self, SEL _cmd)
@@ -1293,6 +1342,17 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
                 NSInteger orientation = (paneIndex >= 0 && paneIndex < MAX_PANES && gPaneLandscape[paneIndex])
                     ? 4 /* UIInterfaceOrientationLandscapeRight */
                     : 1 /* UIInterfaceOrientationPortrait */;
+                // 0.1.70: NEVER send a LANDSCAPE orientation with a
+                // portrait-shaped reference — that contradiction is what
+                // scrambled the scene in DashSplit-17.log (reference
+                // {655, 896} + orientation=4 made the app re-layout at a
+                // portrait shape inside a "landscape" scene). If the pane
+                // shape disagrees with the flag, trust the shape.
+                if (orientation == 4 && paneH > paneW) {
+                    orientation = 1;
+                    CLog(@"fit: pane %@ is portrait-shaped — downgrading orientation to portrait for consistency",
+                         NSStringFromCGSize(paneSize));
+                }
                 ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
                 CLog(@"fit: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
             }
@@ -1410,6 +1470,10 @@ static UIButton *gMaximizeButtons[MAX_PANES];
 static BOOL gMaximized[MAX_PANES];
 static CGFloat gMaximizePrevZoom[MAX_PANES];
 static CGPoint gMaximizePrevCenter[MAX_PANES];
+// 0.1.70: one-tap landscape — snapshot of the pre-landscape zoom + center so
+// tapping 竖屏 restores the exact size & position the pane had before.
+static CGFloat gLandPrevZoom[MAX_PANES];
+static CGPoint gLandPrevCenter[MAX_PANES];
 
 // 0.1.64: per-pane orientation — gPaneLandscape flips the pane to landscape
 // aspect; gOrientationViews (always the HostSlot container) hosts the app.
@@ -1485,6 +1549,11 @@ static void ReactivateSlot(int index)
     });
 }
 
+// 0.1.70: per-pane closed state, MOVED UP here (was below the UI section) so
+// ApplyModeWhenReady can check it — the Live poll must never re-arm a pane
+// the user has already minimized.
+static BOOL gPaneClosed[MAX_PANES];
+
 // 0.0.23: the liveness signal is the SCENE, not SBApplication.isRunning. On
 // this device isRunning stays 0 forever even while the scene renders live
 // content, and the 0.0.22 revert-to-0 keyed on it killed a working display
@@ -1498,6 +1567,15 @@ static void ApplyModeWhenReady(int index, int attempt)
     HostSlot *slot = gSlots[index];
     if (!slot || !slot.viewController) return;
     if (gUserClosed) return;
+    // 0.1.70: the pane may have been minimized while this poll was pending
+    // (DashSplit-17.log: close at 09:32:31, the poll fired on the same second
+    // and re-armed mode 2 on the hidden pane — the next foreground=No diff
+    // aborted SpringBoard). A closed pane must NEVER go Live.
+    if (gPaneClosed[index]) {
+        CLog(@"mode[%d]: pane closed — aborting Live poll", index);
+        SlotSetMode(index, 0);
+        return;
+    }
     
     char tag = index == 0 ? 'L' : (index == 1 ? 'R' : 'M');
     id scene = slot.handle ? Call0(slot.handle, @"sceneIfExists") : nil;
@@ -1677,6 +1755,9 @@ static void TeardownAllHosts(void)
     // layout pass during invalidate may read [UIScreen bounds], and a
     // stale hooked size corrupts the next interface's window creation.
     gNativeFillActive = NO;
+    // 0.1.70: the hook is off — refresh the physical screen cache so the
+    // next interface's aspect math uses real screen dimensions.
+    CachePhysicalScreenSize();
     gNativeFillCurrentPane = -1;
     for (int i = 0; i < MAX_PANES; i++) gNativeFillSizes[i] = CGSizeZero;
     // Teardown ALL slots (not just PaneCount()) — when switching from 3-split
@@ -1740,7 +1821,8 @@ static CGFloat gPaneZoom[MAX_PANES];
 
 // Per-pane closed state: when the user taps the × button the pane is
 // hidden and a capsule button appears. Tapping the capsule restores it.
-static BOOL gPaneClosed[MAX_PANES];
+// 0.1.70: the declaration moved up next to ApplyModeWhenReady (which now
+// checks it before re-arming Live mode on a minimized pane).
 
 #pragma mark - Pane drag / close / capsule gestures
 
@@ -2094,6 +2176,12 @@ static void ShowToast(NSString *text)
 // then persists so a reconnect restores the same orientation.
 // 0.1.67: the portrait switch re-hosts the pane so the scene layout restarts
 // clean — the landscape pass resized the scene's views/reference.
+// 0.1.70: ONE-TAP LANDSCAPE — tapping 横屏 no longer just flips the aspect at
+// the old size; it snaps the pane to a big landscape window (width fills the
+// available width clear of the right-edge control strip, height follows the
+// landscape aspect, centered on the host) so a video app enlarges in one tap.
+// Tapping 竖屏 re-hosts clean AND restores the exact pre-landscape zoom +
+// center snapshot.
 - (void)landscapeTapped:(UIButton *)sender
 {
     int paneIndex = (int)sender.tag;
@@ -2105,6 +2193,38 @@ static void ShowToast(NSString *text)
     gPaneLandscape[paneIndex] = !gPaneLandscape[paneIndex];
     BOOL nowLandscape = gPaneLandscape[paneIndex];
     CLog(@"land: tap pane[%d] -> %@", paneIndex, nowLandscape ? @"landscape" : @"portrait");
+
+    if (!wasLandscape && nowLandscape) {
+        // 0.1.70: enlarge to fill the available width in one tap.
+        UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
+        if (host) {
+            CGRect bounds = host.bounds;
+            // Clear of the right-edge control strip (36pt) + its gap/margin.
+            CGFloat availW = bounds.size.width - 48.0;
+            if (availW < 200) availW = bounds.size.width;
+            CGFloat baseUnit = floor(bounds.size.width / 5.0);
+            CGFloat baseW = MAX(baseUnit * AppSizeForIndex(paneIndex), 60);
+            CGFloat baseH = baseW * PaneAspect(paneIndex);  // landscape aspect (already flipped)
+            CGFloat zoomW = baseW > 0 ? availW / baseW : 1.0;
+            CGFloat zoomH = baseH > 0 ? bounds.size.height / baseH : zoomW;
+            CGFloat fillZoom = MIN(zoomW, zoomH);
+            if (fillZoom < 0.2) fillZoom = 0.2;
+            gLandPrevZoom[paneIndex] = gPaneZoom[paneIndex];
+            gLandPrevCenter[paneIndex] = gPaneCenters[paneIndex];
+            gPaneZoom[paneIndex] = fillZoom;
+            gPaneCenters[paneIndex] = CGPointMake(availW / 2.0, bounds.size.height / 2.0);
+            // Landscape owns the size now — cancel any pending maximize.
+            gMaximized[paneIndex] = NO;
+            UIButton *maxBtn = gMaximizeButtons[paneIndex];
+            if (maxBtn) {
+                [maxBtn setTitle:@"放大" forState:UIControlStateNormal];
+                [maxBtn setTitle:@"放大" forState:UIControlStateHighlighted];
+            }
+            CLog(@"land: pane[%d] landscape size zoom=%.2f center={%.0f,%.0f}",
+                 paneIndex, fillZoom,
+                 gPaneCenters[paneIndex].x, gPaneCenters[paneIndex].y);
+        }
+    }
 
     if (wasLandscape && !nowLandscape) {
         // 0.1.67: portrait switch re-hosts the pane. The landscape pass told
@@ -2120,11 +2240,34 @@ static void ShowToast(NSString *text)
             // after quick landscape/portrait cycles).
             gNativeFillActive = NO;
             gNativeFillSizes[paneIndex] = CGSizeZero;
+            // 0.1.70: the hook is off — refresh the physical screen cache so
+            // the re-hosted portrait layout computes its aspect from real
+            // screen dimensions, not a stale (possibly hooked) value.
+            CachePhysicalScreenSize();
             TeardownSlot(slot);
             gSlots[paneIndex] = nil;
             CLog(@"land: pane[%d] portrait — re-hosting %@ for a clean layout", paneIndex, bid);
             gSlots[paneIndex] = HostApplication(bid, gOrientationViews[paneIndex], paneIndex);
         }
+        // 0.1.70: restore the exact pre-landscape zoom + center. The snapshot
+        // may be empty (landscape restored from a persisted reconnect — no
+        // in-session tap happened); fall back to the default zoom and keep
+        // the current center in that case.
+        CGFloat prevZoom = gLandPrevZoom[paneIndex];
+        CGPoint prevCenter = gLandPrevCenter[paneIndex];
+        gPaneZoom[paneIndex] = prevZoom > 0 ? prevZoom : 1.0;
+        if (!CGPointEqualToPoint(prevCenter, CGPointZero)) {
+            gPaneCenters[paneIndex] = prevCenter;
+        }
+        gMaximized[paneIndex] = NO;
+        UIButton *maxBtn = gMaximizeButtons[paneIndex];
+        if (maxBtn) {
+            [maxBtn setTitle:@"放大" forState:UIControlStateNormal];
+            [maxBtn setTitle:@"放大" forState:UIControlStateHighlighted];
+        }
+        CLog(@"land: pane[%d] portrait restored zoom=%.2f center={%.0f,%.0f}",
+             paneIndex, gPaneZoom[paneIndex],
+             gPaneCenters[paneIndex].x, gPaneCenters[paneIndex].y);
     }
 
     Layout();
@@ -2189,6 +2332,12 @@ static void ShowToast(NSString *text)
 
     // Stand the controller down from Live (safe, crash-proof).
     SlotSetMode(paneIndex, 0);
+    // 0.1.70: also mark the slot suppressed so the health check cannot nudge
+    // or re-host the hidden pane back to Live — that silent re-arm is what
+    // aborted SpringBoard in DashSplit-17.log ~6s after a minimize. Tapping
+    // the capsule clears the flag again (RestoreSlot).
+    HostSlot *slot = gSlots[paneIndex];
+    if (slot) slot.suppressed = 1;
 
     // 0.1.59: re-closing the app docks its capsule back into the top row.
     gCapsuleDetached[paneIndex] = NO;
@@ -2969,10 +3118,14 @@ static void InstallLockStateObserver(void)
 
 // 0.1.64: per-pane aspect ratio — height/width. Portrait panes follow the
 // phone screen (tall); landscape panes flip it (wide).
+// 0.1.70: reads the CACHED physical screen size — [UIScreen mainScreen] is
+// hooked during landscape native-fill and returns the swapped pane size,
+// which turned this ratio portrait-shaped and scrambled the panes.
 static CGFloat PaneAspect(int index)
 {
-    CGFloat phoneW = [UIScreen mainScreen].bounds.size.width;
-    CGFloat phoneH = [UIScreen mainScreen].bounds.size.height;
+    CachePhysicalScreenSize();
+    CGFloat phoneW = gPhysScreenW;
+    CGFloat phoneH = gPhysScreenH;
     if (phoneW <= 0) phoneW = 1;
     if (phoneH <= 0) phoneH = 1;
     if (index >= 0 && index < MAX_PANES && gPaneLandscape[index]) {
@@ -3081,9 +3234,30 @@ static void Layout(void)
             // anchor is set by CreateInterface (defaults), moved by dragging,
             // and restored by LoadPaneLayoutState.
             CGPoint anchor = gPaneCenters[index];
-            CGRect baseFrame = CGRectMake(anchor.x - scaledW / 2.0,
-                                          anchor.y - scaledH / 2.0,
-                                          scaledW, scaledH);
+            // 0.1.70: clamp the zoomed frame — a pane bigger than the host
+            // centers symmetrically (overflow split evenly), a pane that fits
+            // is kept fully visible. The 8× zoom in DashSplit-17.log hung a
+            // landscape pane half off-screen (x = -271.5) because the anchor
+            // was never clamped. Display-only: gPaneCenters keeps the saved
+            // anchor, and the drag handler applies its own (looser, 40pt-
+            // visible) clamp while the user is actively dragging.
+            CGFloat halfW = scaledW / 2.0;
+            CGFloat halfH = scaledH / 2.0;
+            CGFloat cx = anchor.x;
+            CGFloat cy = anchor.y;
+            if (scaledW >= bounds.size.width) {
+                cx = bounds.size.width / 2.0;
+            } else {
+                if (cx < halfW) cx = halfW;
+                if (cx > bounds.size.width - halfW) cx = bounds.size.width - halfW;
+            }
+            if (scaledH >= bounds.size.height) {
+                cy = bounds.size.height / 2.0;
+            } else {
+                if (cy < halfH) cy = halfH;
+                if (cy > bounds.size.height - halfH) cy = bounds.size.height - halfH;
+            }
+            CGRect baseFrame = CGRectMake(cx - halfW, cy - halfH, scaledW, scaledH);
             gPaneBaseFrames[index] = baseFrame;
 
             // Skip closed panes — they're hidden and don't need layout.
@@ -3168,6 +3342,8 @@ static UIWindow *MakeTestWindow(void)
     // (observed: {552, 414} instead of {414, 896}).
     BOOL wasHookActive = gNativeFillActive;
     gNativeFillActive = NO;
+    // 0.1.70: the hook is off right now — refresh the physical screen cache.
+    CachePhysicalScreenSize();
     
     // Full phone screen; CreateInterface adds a 90-rotated container on top
     // so the panes render in landscape orientation, matching the car display.
@@ -4055,8 +4231,10 @@ static void DashSplitInit(void)
 {
     @autoreleasepool {
         if (Disabled()) return;
-        
-        CLog(@"--- DashSplit 0.1.64 loaded ---");
+
+        // 0.1.70: cache the physical screen size before any hook can swap it.
+        CachePhysicalScreenSize();
+        CLog(@"--- DashSplit 0.1.70 loaded --- screen=%.0fx%.0f", gPhysScreenW, gPhysScreenH);
         InstallExceptionFilter();
         InstallCrashHandlers();
         
