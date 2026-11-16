@@ -5,7 +5,7 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 > English version: [README.en.md](README.en.md)
 
 - **包名**：`zp.dashsplit`
-- **当前版本**：0.1.78 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
+- **当前版本**：0.1.79 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
 - **宿主模式参考**：[carplay-cast](https://github.com/EthanArbuckle/carplay-cast)（Apache-2.0）
 
 ---
@@ -184,6 +184,8 @@ make package FINALPACKAGE=1
 ---
 
 ## 版本记录（摘要）
+
+- **0.1.79**：**修复横屏状态点「放大」后画面跳到左上角 3/4**——0.1.78 的画布自愈会在延迟回调里比对「排程时捕获的面板尺寸」，而放大把面板从 `610×282` 变成全屏 `896×414` 后，旧回调仍拿 610×282 做基准，误判「推送丢了」并把**旧尺寸**推回场景，画布于是缩到左上角那块。现在自愈前先确认该尺寸仍是**最近一次推给场景的尺寸**（`gScenePushedSize`），被更新的布局取代就直接跳过，不再回退。
 
 - **0.1.78**：**横屏体验收尾**——① 默认横屏尺寸不再撑满（约 72% 可用宽 / 80% 高、四边留白），拉到最大时面板贴边导致拖动把手不好按；② 横竖切换**加 1.2s 防抖**，修复连续快速点击触发 SpringBoard respring（每次切竖屏都会 teardown + 重新托管，第二次点击撞上场景过渡，SpringBoard 在仍显示「加载App……」时收到 `foreground = No` 的 settings diff，抛 `Something changed the scene's foreground status out from underneath us`；该断言由 `@throw` 直接抛出，无法安全吞掉，只能掐掉竞态源）；③ **画布自愈**：横屏后 1s / 2.4s 校验 `_UISceneLayerHostContainerView` 尺寸是否等于面板尺寸，若某次 settings 推送被丢弃则清缓存重推（每次切换最多 2 次），修复「偶尔点横屏不生效、来回切一次才好」。
 
