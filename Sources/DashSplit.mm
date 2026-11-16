@@ -1369,12 +1369,22 @@ static void ApplySceneFrameOrientation(UIView *sceneView, CGSize paneSize, NSInt
 // transition. Instead of asking the user to bounce the pane, compare the app
 // canvas (_UISceneLayerHostContainerView) against the pane and re-push the
 // settings once or twice with the dedup cache cleared. Capped per toggle so a
-// genuinely unhappiness case can't turn into a settings-push loop.
+// genuinely unhappy case can't turn into a settings-push loop.
+//
+// 0.1.79: never heal against a STALE size. This runs from a delayed block that
+// captured the pane size at schedule time, and the pane can change in between
+// (tapping 放大 resizes it). The 14:35:36 log is exactly that: the pane went
+// 610x282 -> 896x414, the canvas correctly followed to 896x414, then the stale
+// check "found" the mismatch and pushed 610x282 back — the app content snapped
+// into the top-left 3/4 of a now-fullscreen pane. Only act if the size we are
+// checking is still the size we last pushed to the scene; if a newer fit has
+// pushed something else, this check is obsolete.
 static void SelfHealSceneCanvas(UIView *sceneView, CGSize paneSize, int index)
 {
     if (!sceneView) return;
     if (index < 0 || index >= MAX_PANES) return;
     if (gSceneHealAttempts[index] >= 2) return;
+    if (!CGSizeEqualToSize(gScenePushedSize[index], paneSize)) return;   // superseded
     UIView *canvas = FindViewOfClass(sceneView, @"_UISceneLayerHostContainerView", 0);
     if (!canvas) return;
     CGSize c = canvas.bounds.size;
@@ -4542,7 +4552,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.78 loaded ---");
+        CLog(@"--- DashSplit 0.1.79 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
