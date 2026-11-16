@@ -1273,6 +1273,92 @@ static void DumpSceneTree(UIView *view, int depth, int maxDepth, int *budget)
     }
 }
 
+// 0.1.73: depth-limited search by exact class name — used to verify that the
+// App's canvas (_UISceneLayerHostContainerView) actually followed the pane
+// size after we push the scene settings.
+static UIView *FindViewOfClass(UIView *root, NSString *className, int depth)
+{
+    if (!root || depth > 8) return nil;
+    if ([NSStringFromClass([root class]) isEqualToString:className]) return root;
+    for (UIView *sub in root.subviews) {
+        UIView *hit = FindViewOfClass(sub, className, depth + 1);
+        if (hit) return hit;
+    }
+    return nil;
+}
+
+// 0.1.73: push the pane's frame + orientation into the SCENE's settings.
+// The 0.1.72 tree dump proved reference size alone is not enough: the scene's
+// _UISceneLayerHostContainerView (the App's canvas) stayed at the phone's
+// {414, 896} while the pane view was {848, 391}, so the App content sat
+// clipped in a corner. SpringBoard tells an app its window size/orientation
+// through the scene's settings (frame + interfaceOrientation) — that is the
+// lever we were missing.
+static CGSize gScenePushedSize[MAX_PANES];
+static NSInteger gScenePushedOrientation[MAX_PANES];
+
+static void ResetSceneFramePushCache(int index)
+{
+    if (index >= 0 && index < MAX_PANES) {
+        gScenePushedSize[index] = CGSizeZero;
+        gScenePushedOrientation[index] = 0;
+    }
+}
+
+static void ApplySceneFrameOrientation(UIView *sceneView, CGSize paneSize, NSInteger orientation, int index)
+{
+    if (!sceneView) return;
+    // Dedup: the 0.8s/1.6s landscape re-fits call this repeatedly with the
+    // same size — pushing identical settings each time makes SpringBoard
+    // churn the scene for nothing.
+    if (index >= 0 && index < MAX_PANES &&
+        CGSizeEqualToSize(gScenePushedSize[index], paneSize) &&
+        gScenePushedOrientation[index] == orientation) {
+        return;
+    }
+    id handle = Call0(sceneView, @"sceneHandle");
+    id scene = handle ? Call0(handle, @"sceneIfExists") : nil;
+    if (!scene) {
+        CLog(@"scene: pane[%d] no scene handle/scene — settings update skipped", index);
+        return;
+    }
+    SEL updSel = NSSelectorFromString(@"updateSettingsWithBlock:");
+    if (![scene respondsToSelector:updSel]) {
+        CLog(@"scene: pane[%d] scene has no updateSettingsWithBlock: — skipped", index);
+        return;
+    }
+    CGRect frame = CGRectMake(0, 0, paneSize.width, paneSize.height);
+    void (^block)(id) = ^(id settings) {
+        @try {
+            SEL setFrameSel = NSSelectorFromString(@"setFrame:");
+            if ([settings respondsToSelector:setFrameSel]) {
+                ((void (*)(id, SEL, CGRect))objc_msgSend)(settings, setFrameSel, frame);
+                CLog(@"scene: pane[%d] settings.frame -> %@", index, NSStringFromCGRect(frame));
+            } else {
+                // Fallback: some versions expose it only as a KVC key.
+                [settings setValue:[NSValue valueWithCGRect:frame] forKey:@"frame"];
+                CLog(@"scene: pane[%d] settings.frame (KVC) -> %@", index, NSStringFromCGRect(frame));
+            }
+            SEL setOriSel = NSSelectorFromString(@"setInterfaceOrientation:");
+            if ([settings respondsToSelector:setOriSel]) {
+                ((void (*)(id, SEL, NSInteger))objc_msgSend)(settings, setOriSel, orientation);
+                CLog(@"scene: pane[%d] settings.interfaceOrientation -> %d", index, (int)orientation);
+            }
+        } @catch (NSException *e) {
+            CLog(@"scene: pane[%d] settings block threw %@", index, e.reason);
+        }
+    };
+    @try {
+        ((void (*)(id, SEL, id))objc_msgSend)(scene, updSel, block);
+        if (index >= 0 && index < MAX_PANES) {
+            gScenePushedSize[index] = paneSize;
+            gScenePushedOrientation[index] = orientation;
+        }
+    } @catch (NSException *e) {
+        CLog(@"scene: pane[%d] updateSettingsWithBlock threw %@", index, e.reason);
+    }
+}
+
 // Applies the aspect-fit transform that maps the app's phone-sized scene
 // content into its pane. Extracted from ScaleAppViewIntoContainer because it
 // must be RE-applied: the system resets this transform when the scene cycles
@@ -1387,6 +1473,7 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         // _updateReferenceSize:andOrientation: is the SpringBoard-native
         // method on SBDeviceApplicationSceneView that tells the scene to
         // lay out at the given size.
+        NSInteger sceneOrientation = 1;   // 0.1.73: hoisted for the settings push
         if (sceneView) {
             SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
             if ([sceneView respondsToSelector:refSizeSel]) {
@@ -1407,6 +1494,7 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
                     CLog(@"fit: pane %@ is portrait-shaped — downgrading orientation to portrait for consistency",
                          NSStringFromCGSize(paneSize));
                 }
+                sceneOrientation = orientation;
                 ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
                 CLog(@"fit: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
             }
@@ -1442,6 +1530,26 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         [appView setNeedsLayout];
         [contentView layoutIfNeeded];
         [appView layoutIfNeeded];
+
+        // 0.1.73: reference size alone left the App's canvas at the phone size
+        // ({414,896} inside an {848,391} pane — the 0.1.72 tree dump). Push the
+        // pane frame + orientation into the SCENE settings, which is what
+        // actually drives the app window's size and orientation.
+        @try {
+            ApplySceneFrameOrientation(sceneView, paneSize, sceneOrientation, paneIndex);
+        } @catch (NSException *e) {
+            CLog(@"fit: scene settings push threw %@", e.reason);
+        }
+        // Verify: log the layer host container (the App canvas) 1s later.
+        UIView *verifySceneView = sceneView;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *host = FindViewOfClass(verifySceneView, @"_UISceneLayerHostContainerView", 0);
+            UIView *ctx = FindViewOfClass(verifySceneView, @"_UIContextLayerHostView", 0);
+            CLog(@"scene: canvas after settings push — layerHost=%@ ctxLayer=%@ (pane=%@)",
+                 host ? NSStringFromCGRect(host.frame) : @"(nil)",
+                 ctx ? NSStringFromCGRect(ctx.frame) : @"(nil)",
+                 NSStringFromCGSize(paneSize));
+        });
         // Post-layout diagnostic — recurse 3 levels deep to find the App's
         // actual content views and see what size THEY think they are.
         CLog(@"fit: native fill POST-layout appView.bounds=%@", NSStringFromCGRect(appView.bounds));
@@ -2302,6 +2410,16 @@ static void ShowToast(NSString *text)
             gSlots[paneIndex] = nil;
             CLog(@"land: pane[%d] portrait — re-hosting %@ for a clean layout", paneIndex, bid);
             gSlots[paneIndex] = HostApplication(bid, gOrientationViews[paneIndex], paneIndex);
+        }
+        // 0.1.73: the scene still carries the landscape frame/orientation we
+        // pushed for the wide pane. Put it back to the phone's portrait size
+        // so the re-hosted pane lays out like any normal portrait pane.
+        HostSlot *freshSlot = gSlots[paneIndex];
+        if (freshSlot && freshSlot.viewController) {
+            CachePhysicalScreenSize();
+            ResetSceneFramePushCache(paneIndex);
+            ApplySceneFrameOrientation(Call0(freshSlot.viewController, @"appView"),
+                                       CGSizeMake(gPhysScreenW, gPhysScreenH), 1, paneIndex);
         }
         // 0.1.70: restore the exact pre-landscape zoom + center. The snapshot
         // may be empty (landscape restored from a persisted reconnect — no
@@ -4310,7 +4428,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.72 loaded ---");
+        CLog(@"--- DashSplit 0.1.73 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
