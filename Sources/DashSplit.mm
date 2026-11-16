@@ -1296,6 +1296,10 @@ static UIView *FindViewOfClass(UIView *root, NSString *className, int depth)
 // lever we were missing.
 static CGSize gScenePushedSize[MAX_PANES];
 static NSInteger gScenePushedOrientation[MAX_PANES];
+// 0.1.78: last landscape/portrait toggle timestamp per pane (debounce), and
+// how many canvas self-heal attempts the current toggle already spent.
+static NSTimeInterval gLandLastToggle[MAX_PANES];
+static int gSceneHealAttempts[MAX_PANES];
 
 static void ResetSceneFramePushCache(int index)
 {
@@ -1357,6 +1361,33 @@ static void ApplySceneFrameOrientation(UIView *sceneView, CGSize paneSize, NSInt
     } @catch (NSException *e) {
         CLog(@"scene: pane[%d] updateSettingsWithBlock threw %@", index, e.reason);
     }
+}
+
+// 0.1.78: self-heal. "Sometimes the landscape tap just doesn't take, switching
+// to portrait and back fixes it" (user report) means SpringBoard dropped or
+// never applied one settings push — usually when the push raced the host
+// transition. Instead of asking the user to bounce the pane, compare the app
+// canvas (_UISceneLayerHostContainerView) against the pane and re-push the
+// settings once or twice with the dedup cache cleared. Capped per toggle so a
+// genuinely unhappiness case can't turn into a settings-push loop.
+static void SelfHealSceneCanvas(UIView *sceneView, CGSize paneSize, int index)
+{
+    if (!sceneView) return;
+    if (index < 0 || index >= MAX_PANES) return;
+    if (gSceneHealAttempts[index] >= 2) return;
+    UIView *canvas = FindViewOfClass(sceneView, @"_UISceneLayerHostContainerView", 0);
+    if (!canvas) return;
+    CGSize c = canvas.bounds.size;
+    if (fabs(c.width - paneSize.width) <= 2.0 && fabs(c.height - paneSize.height) <= 2.0) {
+        return;   // canvas matches the pane — nothing to heal
+    }
+    gSceneHealAttempts[index]++;
+    CLog(@"heal: pane[%d] canvas %@ != pane %@ — re-pushing settings (%d/2)",
+         index, NSStringFromCGSize(c), NSStringFromCGSize(paneSize), gSceneHealAttempts[index]);
+    ResetSceneFramePushCache(index);
+    ApplySceneFrameOrientation(sceneView, paneSize, 1, index);
+    [sceneView setNeedsLayout];
+    [sceneView layoutIfNeeded];
 }
 
 // 0.1.75: debug snapshot — writes the on-screen window to a PNG so the exact
@@ -1572,6 +1603,7 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         }
         // Verify: log the layer host container (the App canvas) 1s later.
         UIView *verifySceneView = sceneView;
+        int verifyIndex = paneIndex;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIView *host = FindViewOfClass(verifySceneView, @"_UISceneLayerHostContainerView", 0);
             UIView *pres = FindViewOfClass(verifySceneView, @"_UIScenePresentationView", 0);
@@ -1583,6 +1615,20 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
                  NSStringFromCGSize(paneSize));
             ((void (*)(id, SEL))objc_msgSend)(verifySceneView, NSSelectorFromString(@"setNeedsLayout"));
             ((void (*)(id, SEL))objc_msgSend)(verifySceneView, NSSelectorFromString(@"layoutIfNeeded"));
+            // 0.1.78: repair a dropped settings push instead of making the user
+            // toggle portrait→landscape again. Landscape only — the portrait
+            // path owns its own frame push (landscapeTapped).
+            if (verifyIndex >= 0 && verifyIndex < MAX_PANES && gPaneLandscape[verifyIndex]) {
+                SelfHealSceneCanvas(verifySceneView, paneSize, verifyIndex);
+            }
+        });
+        // 0.1.78: one more check after the host transition has surely settled
+        // (the 1s pass can still run mid-transition). SelfHealSceneCanvas caps
+        // itself at two attempts per toggle, so this is safe to schedule.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (verifyIndex >= 0 && verifyIndex < MAX_PANES && gPaneLandscape[verifyIndex]) {
+                SelfHealSceneCanvas(verifySceneView, paneSize, verifyIndex);
+            }
         });
         // Post-layout diagnostic — recurse 3 levels deep to find the App's
         // actual content views and see what size THEY think they are.
@@ -2386,12 +2432,35 @@ static void ShowToast(NSString *text)
     if (!gPanes[paneIndex]) return;
 
     BOOL wasLandscape = gPaneLandscape[paneIndex];
+    // 0.1.78: debounce. Every portrait switch tears the pane down and re-hosts
+    // it, so a rapid second tap lands in the middle of that scene transition.
+    // The 13:58:40 respring proves the damage: SpringBoard delivered a
+    // `foreground = BSSettingFlagNo` settings diff while the pane still showed
+    // the '加载App……' placeholder, i.e. mid-host, and our controller was in
+    // Live mode → NSInternalInconsistencyException → abort. That assertion is
+    // raised with @throw (not +raise:format:), so it cannot be swallowed
+    // safely; the fix is to stop the race from happening at all.
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (now - gLandLastToggle[paneIndex] < 1.2) {
+        CLog(@"land: pane[%d] toggle ignored — %.2fs since last switch (transition still settling)",
+             paneIndex, now - gLandLastToggle[paneIndex]);
+        return;
+    }
+    gLandLastToggle[paneIndex] = now;
+    gSceneHealAttempts[paneIndex] = 0;
+
     gPaneLandscape[paneIndex] = !gPaneLandscape[paneIndex];
     BOOL nowLandscape = gPaneLandscape[paneIndex];
     CLog(@"land: tap pane[%d] -> %@", paneIndex, nowLandscape ? @"landscape" : @"portrait");
 
     if (!wasLandscape && nowLandscape) {
-        // 0.1.70: enlarge to fill the available width in one tap.
+        // 0.1.70: enlarge in one tap.
+        // 0.1.78: …but NOT to the maximum. Filling the available width pushed
+        // the pane flush against the edges, where the move capsule sits, so
+        // dragging it afterwards became nearly impossible (user report). Cap
+        // the default at ~72% of the usable width / 80% of the height: still
+        // far larger than the portrait pane (video visibly widens), with clear
+        // margins on every side so the pane stays grabbable.
         UIView *host = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
         if (host) {
             CGRect bounds = host.bounds;
@@ -2401,13 +2470,15 @@ static void ShowToast(NSString *text)
             CGFloat baseUnit = floor(bounds.size.width / 5.0);
             CGFloat baseW = MAX(baseUnit * AppSizeForIndex(paneIndex), 60);
             CGFloat baseH = baseW * PaneAspect(paneIndex);  // landscape aspect (already flipped)
-            CGFloat zoomW = baseW > 0 ? availW / baseW : 1.0;
-            CGFloat zoomH = baseH > 0 ? bounds.size.height / baseH : zoomW;
-            CGFloat fillZoom = MIN(zoomW, zoomH);
-            if (fillZoom < 0.2) fillZoom = 0.2;
+            CGFloat targetW = availW * 0.72;
+            CGFloat targetH = bounds.size.height * 0.80;
+            CGFloat zoomW = baseW > 0 ? targetW / baseW : 1.0;
+            CGFloat zoomH = baseH > 0 ? targetH / baseH : zoomW;
+            CGFloat landZoom = MIN(zoomW, zoomH);
+            if (landZoom < 0.2) landZoom = 0.2;
             gLandPrevZoom[paneIndex] = gPaneZoom[paneIndex];
             gLandPrevCenter[paneIndex] = gPaneCenters[paneIndex];
-            gPaneZoom[paneIndex] = fillZoom;
+            gPaneZoom[paneIndex] = landZoom;
             gPaneCenters[paneIndex] = CGPointMake(availW / 2.0, bounds.size.height / 2.0);
             // Landscape owns the size now — cancel any pending maximize.
             gMaximized[paneIndex] = NO;
@@ -2416,8 +2487,8 @@ static void ShowToast(NSString *text)
                 [maxBtn setTitle:@"放大" forState:UIControlStateNormal];
                 [maxBtn setTitle:@"放大" forState:UIControlStateHighlighted];
             }
-            CLog(@"land: pane[%d] landscape size zoom=%.2f center={%.0f,%.0f}",
-                 paneIndex, fillZoom,
+            CLog(@"land: pane[%d] landscape size zoom=%.2f (target %.0fx%.0f) center={%.0f,%.0f}",
+                 paneIndex, landZoom, targetW, targetH,
                  gPaneCenters[paneIndex].x, gPaneCenters[paneIndex].y);
         }
     }
@@ -4471,7 +4542,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.77 loaded ---");
+        CLog(@"--- DashSplit 0.1.78 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
