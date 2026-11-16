@@ -1492,30 +1492,30 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         // _updateReferenceSize:andOrientation: is the SpringBoard-native
         // method on SBDeviceApplicationSceneView that tells the scene to
         // lay out at the given size.
-        NSInteger sceneOrientation = 1;   // 0.1.73: hoisted for the settings push
+        // 0.1.77: send the pane size with a PORTRAIT orientation, always.
+        //
+        // Up to 0.1.76 a landscape pane sent (wideSize, orientation=4). The
+        // 0.1.76 log shows what SpringBoard does with that: it converts the
+        // frame into the app's own (portrait) coordinate space and swaps the
+        // axes — _UISceneLayerHostContainerView came out {391,848} inside an
+        // {848,391} presentation view. VLC therefore got a PORTRAIT window
+        // while being told the interface was landscape; its landscape layout
+        // rules ran on a portrait window and the video collapsed into the
+        // top-left corner (only a sliver of it visible).
+        //
+        // The consistent form is the "external display" one: give the app the
+        // real wide frame and leave the interface orientation portrait, so the
+        // app receives a genuine 848x391 window and lays out wide. That is
+        // what makes video fill the pane — the same look as the phone in
+        // landscape — with no axis swap and no rotation involved.
+        NSInteger sceneOrientation = 1 /* UIInterfaceOrientationPortrait */;
         if (sceneView) {
             SEL refSizeSel = NSSelectorFromString(@"_updateReferenceSize:andOrientation:");
             if ([sceneView respondsToSelector:refSizeSel]) {
-                // 0.1.65: landscape panes send a LANDSCAPE reference so the
-                // app lays out wide (VLC video widens) instead of portrait
-                // content being rotated afterwards.
-                NSInteger orientation = (paneIndex >= 0 && paneIndex < MAX_PANES && gPaneLandscape[paneIndex])
-                    ? 4 /* UIInterfaceOrientationLandscapeRight */
-                    : 1 /* UIInterfaceOrientationPortrait */;
-                // 0.1.70: NEVER send a LANDSCAPE orientation with a
-                // portrait-shaped reference — that contradiction is what
-                // scrambled the scene in DashSplit-17.log (reference
-                // {655, 896} + orientation=4 made the app re-layout at a
-                // portrait shape inside a "landscape" scene). If the pane
-                // shape disagrees with the flag, trust the shape.
-                if (orientation == 4 && paneH > paneW) {
-                    orientation = 1;
-                    CLog(@"fit: pane %@ is portrait-shaped — downgrading orientation to portrait for consistency",
-                         NSStringFromCGSize(paneSize));
-                }
-                sceneOrientation = orientation;
-                ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, orientation);
-                CLog(@"fit: _updateReferenceSize:%@ orientation=%d", NSStringFromCGSize(paneSize), (int)orientation);
+                ((void (*)(id, SEL, CGSize, NSInteger))objc_msgSend)(sceneView, refSizeSel, paneSize, sceneOrientation);
+                CLog(@"fit: _updateReferenceSize:%@ orientation=%d (paneLandscape=%d)",
+                     NSStringFromCGSize(paneSize), (int)sceneOrientation,
+                     (paneIndex >= 0 && paneIndex < MAX_PANES) ? (int)gPaneLandscape[paneIndex] : 0);
             }
         }
 
@@ -1530,30 +1530,18 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         }
 
         appView.frame = CGRectMake(0, 0, paneW, paneH);
-        // 0.1.74: landscape scenes are ROTATED by the system — its canvas is
-        // {391, 848} (swapped) with a rotation transform on the presentation
-        // layers. Forcing identity transforms + pane-sized frames here wiped
-        // that rotation and left the content lying sideways in a corner
-        // (0.1.73 log: settings pushed, canvas {391,848}, still not centered).
-        // So in landscape we only size the scene view and let SpringBoard lay
-        // out the rotated canvas itself.
-        BOOL landscapeScene = (sceneOrientation == 4);
-        if (!landscapeScene) {
-            appView.bounds = CGRectMake(0, 0, paneW, paneH);
-            contentView.transform = CGAffineTransformIdentity;
-            contentView.frame = CGRectMake(0, 0, paneW, paneH);
-            contentView.bounds = CGRectMake(0, 0, paneW, paneH);
-            contentView.center = CGPointMake(paneW / 2.0, paneH / 2.0);
-        } else {
-            // 0.1.76: landscape MUST still clear the portrait aspect-fit scale
-            // (0.198×) left on contentView — the 0.1.75 snapshot showed the app
-            // correctly laid out landscape but shrunk to ~20% in the middle.
-            // Reset ONLY the transform + center; frames/bounds stay owned by
-            // SpringBoard, whose layer rotation turns the {391,848} canvas into
-            // the wide pane.
-            contentView.transform = CGAffineTransformIdentity;
-            contentView.center = CGPointMake(paneW / 2.0, paneH / 2.0);
-        }
+        // 0.1.77: no landscape special case any more. Because the scene stays in
+        // portrait orientation, the app canvas is NOT rotated/swapped, so the
+        // plain "own the frames yourself" path is both safe and correct: the
+        // app view, the content view and the presentation layers all become
+        // exactly the pane rect. (0.1.74/0.1.76's rotate-and-leave-it-to-
+        // SpringBoard branch only existed because orientation=4 made
+        // SpringBoard rotate the canvas.)
+        appView.bounds = CGRectMake(0, 0, paneW, paneH);
+        contentView.transform = CGAffineTransformIdentity;
+        contentView.frame = CGRectMake(0, 0, paneW, paneH);
+        contentView.bounds = CGRectMake(0, 0, paneW, paneH);
+        contentView.center = CGPointMake(paneW / 2.0, paneH / 2.0);
         contentView.clipsToBounds = YES;
         appView.clipsToBounds = YES;
 
@@ -4483,7 +4471,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.76 loaded ---");
+        CLog(@"--- DashSplit 0.1.77 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
