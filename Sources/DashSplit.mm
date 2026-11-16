@@ -1511,11 +1511,21 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         }
 
         appView.frame = CGRectMake(0, 0, paneW, paneH);
-        appView.bounds = CGRectMake(0, 0, paneW, paneH);
-        contentView.transform = CGAffineTransformIdentity;
-        contentView.frame = CGRectMake(0, 0, paneW, paneH);
-        contentView.bounds = CGRectMake(0, 0, paneW, paneH);
-        contentView.center = CGPointMake(paneW / 2.0, paneH / 2.0);
+        // 0.1.74: landscape scenes are ROTATED by the system — its canvas is
+        // {391, 848} (swapped) with a rotation transform on the presentation
+        // layers. Forcing identity transforms + pane-sized frames here wiped
+        // that rotation and left the content lying sideways in a corner
+        // (0.1.73 log: settings pushed, canvas {391,848}, still not centered).
+        // So in landscape we only size the scene view and let SpringBoard lay
+        // out the rotated canvas itself.
+        BOOL landscapeScene = (sceneOrientation == 4);
+        if (!landscapeScene) {
+            appView.bounds = CGRectMake(0, 0, paneW, paneH);
+            contentView.transform = CGAffineTransformIdentity;
+            contentView.frame = CGRectMake(0, 0, paneW, paneH);
+            contentView.bounds = CGRectMake(0, 0, paneW, paneH);
+            contentView.center = CGPointMake(paneW / 2.0, paneH / 2.0);
+        }
         contentView.clipsToBounds = YES;
         appView.clipsToBounds = YES;
 
@@ -1537,6 +1547,10 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         // actually drives the app window's size and orientation.
         @try {
             ApplySceneFrameOrientation(sceneView, paneSize, sceneOrientation, paneIndex);
+            // 0.1.74: the settings change only takes effect on the next layout
+            // pass — force one immediately so the rotated canvas is placed now.
+            [sceneView setNeedsLayout];
+            [sceneView layoutIfNeeded];
         } @catch (NSException *e) {
             CLog(@"fit: scene settings push threw %@", e.reason);
         }
@@ -1544,11 +1558,15 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
         UIView *verifySceneView = sceneView;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIView *host = FindViewOfClass(verifySceneView, @"_UISceneLayerHostContainerView", 0);
-            UIView *ctx = FindViewOfClass(verifySceneView, @"_UIContextLayerHostView", 0);
-            CLog(@"scene: canvas after settings push — layerHost=%@ ctxLayer=%@ (pane=%@)",
+            UIView *pres = FindViewOfClass(verifySceneView, @"_UIScenePresentationView", 0);
+            CLog(@"scene: canvas after settings push — layerHost=%@ t=%@ pres=%@ t=%@ (pane=%@)",
                  host ? NSStringFromCGRect(host.frame) : @"(nil)",
-                 ctx ? NSStringFromCGRect(ctx.frame) : @"(nil)",
+                 host ? NSStringFromCGAffineTransform(host.transform) : @"-",
+                 pres ? NSStringFromCGRect(pres.frame) : @"(nil)",
+                 pres ? NSStringFromCGAffineTransform(pres.transform) : @"-",
                  NSStringFromCGSize(paneSize));
+            ((void (*)(id, SEL))objc_msgSend)(verifySceneView, NSSelectorFromString(@"setNeedsLayout"));
+            ((void (*)(id, SEL))objc_msgSend)(verifySceneView, NSSelectorFromString(@"layoutIfNeeded"));
         });
         // Post-layout diagnostic — recurse 3 levels deep to find the App's
         // actual content views and see what size THEY think they are.
@@ -4428,7 +4446,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.73 loaded ---");
+        CLog(@"--- DashSplit 0.1.74 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
