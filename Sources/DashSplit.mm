@@ -1359,6 +1359,25 @@ static void ApplySceneFrameOrientation(UIView *sceneView, CGSize paneSize, NSInt
     }
 }
 
+// 0.1.75: debug snapshot — writes the on-screen window to a PNG so the exact
+// landscape rendering (which layer is visible, where the app content sits) can
+// be inspected off-device instead of guessed from frames alone.
+static void CaptureDebugSnapshot(UIView *view, NSString *path)
+{
+    if (!view || path.length == 0) return;
+    @try {
+        UIGraphicsBeginImageContextWithOptions(view.bounds.size, NO, 1.0);
+        [view drawViewHierarchyInRect:view.bounds afterScreenUpdates:YES];
+        UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        NSData *png = img ? UIImagePNGRepresentation(img) : nil;
+        BOOL ok = png ? [png writeToFile:path atomically:YES] : NO;
+        CLog(@"dbg: snapshot %@ ok=%d bytes=%lu", path, (int)ok, (unsigned long)png.length);
+    } @catch (NSException *e) {
+        CLog(@"dbg: snapshot threw %@", e.reason);
+    }
+}
+
 // Applies the aspect-fit transform that maps the app's phone-sized scene
 // content into its pane. Extracted from ScaleAppViewIntoContainer because it
 // must be RE-applied: the system resets this transform when the scene cycles
@@ -3385,6 +3404,15 @@ static void ApplyPaneOrientation(int index)
                 DumpSceneTree(sceneV, 0, 5, &budget);
             }
         });
+        // 0.1.75: snapshot 3.2s after the switch — shows exactly what the pane
+        // renders (the video's real on-screen rect), so the next fix targets
+        // the actual layout instead of guessing from view frames.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (index >= 0 && index < MAX_PANES && gSlots[index] == slot && gPaneLandscape[index]) {
+                UIView *hostView = (gTestMode && gTestContainer) ? gTestContainer : gWindow;
+                CaptureDebugSnapshot(hostView, @"/var/mobile/dashsplit_land.png");
+            }
+        });
     }
 }
 
@@ -4446,7 +4474,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.74 loaded ---");
+        CLog(@"--- DashSplit 0.1.75 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
