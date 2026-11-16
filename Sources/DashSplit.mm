@@ -782,19 +782,16 @@ static BOOL gPaneLandscape[MAX_PANES];
 // ({82, 60} in landscape), which turned every aspect computation after the
 // first landscape pass into a portrait-shaped ratio (the {655, 896}
 // scrambled panes in DashSplit-17.log).
+//
+// 0.1.71: CachePhysicalScreenSize moved BELOW gNativeFillActive and is now
+// guarded + exception-safe. Calling [UIScreen mainScreen] inside the dylib
+// constructor sent 0.1.70 straight into safe mode (the 0.1.70 field report:
+// SpringBoard aborted before any logging — UIKit's screen setup is not
+// guaranteed to be ready that early). The cache now: (a) refuses to read
+// while the native-fill hook is active, (b) wraps the UIScreen access in
+// @try so even a throw at load time only means fallback dimensions.
 static CGFloat gPhysScreenW = 0;
 static CGFloat gPhysScreenH = 0;
-
-static void CachePhysicalScreenSize(void)
-{
-    CGSize s = [UIScreen mainScreen].bounds.size;
-    if (s.width > 0 && s.height > 0) {
-        gPhysScreenW = s.width;
-        gPhysScreenH = s.height;
-    }
-    if (gPhysScreenW <= 0) gPhysScreenW = 375;
-    if (gPhysScreenH <= 0) gPhysScreenH = 812;
-}
 
 #pragma mark - Scene foreground assertion filter
 
@@ -1170,6 +1167,25 @@ static void ConfigureAppViewController(int index, id viewController, id entity, 
 // is YES, so non-native modes are zero-cost (the original is called directly).
 static BOOL gNativeFillActive = NO;
 static CGSize gNativeFillSizes[MAX_PANES];  // per-pane sizes
+
+// 0.1.71: definition moved here (below gNativeFillActive) so it can guard
+// against reading hooked values, and exception-safe so an early [UIScreen
+// mainScreen] access can never abort SpringBoard at dylib-load time.
+static void CachePhysicalScreenSize(void)
+{
+    if (gNativeFillActive) return;  // hook live — reading would cache junk
+    @try {
+        CGSize s = [UIScreen mainScreen].bounds.size;
+        if (s.width > 0 && s.height > 0) {
+            gPhysScreenW = s.width;
+            gPhysScreenH = s.height;
+        }
+    } @catch (NSException *exception) {
+        CLog(@"screen: cache threw %@ — keeping %.0fx%.0f", exception.reason, gPhysScreenW, gPhysScreenH);
+    }
+    if (gPhysScreenW <= 0) gPhysScreenW = 375;
+    if (gPhysScreenH <= 0) gPhysScreenH = 812;
+}
 static int gNativeFillCurrentPane = 0;  // which pane is currently being fitted (default 0)
 static IMP gOrigUIScreenBounds;
 
@@ -4232,9 +4248,11 @@ static void DashSplitInit(void)
     @autoreleasepool {
         if (Disabled()) return;
 
-        // 0.1.70: cache the physical screen size before any hook can swap it.
-        CachePhysicalScreenSize();
-        CLog(@"--- DashSplit 0.1.70 loaded --- screen=%.0fx%.0f", gPhysScreenW, gPhysScreenH);
+        // 0.1.71: NO [UIScreen mainScreen] here — 0.1.70 aborted SpringBoard
+        // from this constructor (safe mode). The cache now fills lazily:
+        // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
+        // up, and the guard + @try inside make every call site safe.
+        CLog(@"--- DashSplit 0.1.71 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
