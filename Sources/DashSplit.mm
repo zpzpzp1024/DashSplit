@@ -1247,6 +1247,32 @@ static int EffectiveFit(int paneIndex)
     return FitMode();
 }
 
+// 0.1.72: diagnostic — deep scene view-tree dump. The landscape pane shows the
+// app content parked in a corner: the logged POST-layout snapshots still show
+// a phone-sized canvas (_UISceneLayerHostContainerView at {414, 896}) inside a
+// wide pane, so we need to know WHICH layer still holds the portrait canvas
+// and how the presentation view is anchored. Budget-capped so one dump stays
+// readable; called once per landscape switch, ~1.2s after the re-fit.
+static void DumpSceneTree(UIView *view, int depth, int maxDepth, int *budget)
+{
+    if (!view || depth > maxDepth || *budget <= 0) return;
+    (*budget)--;
+    NSMutableString *indent = [NSMutableString string];
+    for (int i = 0; i < depth; i++) [indent appendString:@"  "];
+    CLog(@"tree: %@%@ frame=%@ bounds=%@ hidden=%d alpha=%.2f tags=%ld",
+         indent, NSStringFromClass([view class]),
+         NSStringFromCGRect(view.frame), NSStringFromCGRect(view.bounds),
+         (int)view.hidden, view.alpha, (long)view.tag);
+    NSArray *subs = view.subviews;
+    NSUInteger shown = MIN(subs.count, (NSUInteger)8);
+    for (NSUInteger i = 0; i < shown; i++) {
+        DumpSceneTree(subs[i], depth + 1, maxDepth, budget);
+    }
+    if (subs.count > shown) {
+        CLog(@"tree: %@  ... %lu more subviews", indent, (unsigned long)(subs.count - shown));
+    }
+}
+
 // Applies the aspect-fit transform that maps the app's phone-sized scene
 // content into its pane. Extracted from ScaleAppViewIntoContainer because it
 // must be RE-applied: the system resets this transform when the scene cycles
@@ -1256,7 +1282,10 @@ static int EffectiveFit(int paneIndex)
 static void FitAppViewToContainer(UIView *appView, UIView *container)
 {
     if (!appView || !container) return;
-    CGSize phone = [UIScreen mainScreen].bounds.size;
+    // 0.1.72: use the CACHED physical size — [UIScreen mainScreen] is hooked
+    // during native fill and would hand back a pane-sized value here.
+    CachePhysicalScreenSize();
+    CGSize phone = CGSizeMake(gPhysScreenW, gPhysScreenH);
     
     id deviceController = nil;
     @try { deviceController = [appView.nextResponder valueForKey:@"_deviceAppViewController"]; } @catch (...) {}
@@ -1281,7 +1310,16 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
     static BOOL didMethodDump = NO;
     
     if (!contentView) {
-        CLog(@"fit: content view not reachable (sceneView=%@ deviceController=%@)", sceneView ? NSStringFromClass([sceneView class]) : @"nil", deviceController ? NSStringFromClass([deviceController class]) : @"nil");
+        // 0.1.72: throttle — a closed/hidden pane gets re-fit repeatedly and
+        // used to flood the log with hundreds of identical lines.
+        static CFAbsoluteTime lastLog = 0;
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        if (now - lastLog > 5.0) {
+            lastLog = now;
+            CLog(@"fit: content view not reachable (sceneView=%@ deviceController=%@) — throttled 5s",
+                 sceneView ? NSStringFromClass([sceneView class]) : @"nil",
+                 deviceController ? NSStringFromClass([deviceController class]) : @"nil");
+        }
         return;
     }
     
@@ -3195,6 +3233,22 @@ static void ApplyPaneOrientation(int index)
                 FitAppViewToContainer(Call0(slot.viewController, @"view"), wrapper);
             }
         });
+        // 0.1.72: one-shot diagnostic dump once the re-fits have settled —
+        // shows which layer still carries the phone-sized canvas and how the
+        // presentation view is anchored inside the wide pane.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (index >= 0 && index < MAX_PANES && gSlots[index] == slot && gPaneLandscape[index]) {
+                UIView *app = Call0(slot.viewController, @"view");
+                UIView *sceneV = Call0(slot.viewController, @"appView");
+                int budget = 70;
+                CLog(@"tree: === pane[%d] landscape dump pane=%@ wrapper=%@ ===",
+                     index, NSStringFromCGRect(gPanes[index].frame), NSStringFromCGRect(wrapper.bounds));
+                DumpSceneTree(app, 0, 5, &budget);
+                budget = 45;
+                CLog(@"tree: === sceneView dump ===");
+                DumpSceneTree(sceneV, 0, 5, &budget);
+            }
+        });
     }
 }
 
@@ -4036,6 +4090,10 @@ static void HealthCheckSlots(void)
             // re-host while suppressed — that would flip us back to Live and
             // re-arm the assertion. Revive passively only when the system
             // itself reports the scene active again.
+            //
+            // 0.1.72: never revive a pane the USER closed — DashSplit-17.log's
+            // respring came from exactly this re-arm on a minimized pane.
+            if (gPaneClosed[index]) continue;
             if (scene && active) {
                 CLog(@"health[%d]: scene active again after preempt, reviving", index);
                 slot.suppressed = 0;
@@ -4252,7 +4310,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.71 loaded ---");
+        CLog(@"--- DashSplit 0.1.72 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
