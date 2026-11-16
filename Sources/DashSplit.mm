@@ -1544,6 +1544,15 @@ static void FitAppViewToContainer(UIView *appView, UIView *container)
             contentView.frame = CGRectMake(0, 0, paneW, paneH);
             contentView.bounds = CGRectMake(0, 0, paneW, paneH);
             contentView.center = CGPointMake(paneW / 2.0, paneH / 2.0);
+        } else {
+            // 0.1.76: landscape MUST still clear the portrait aspect-fit scale
+            // (0.198×) left on contentView — the 0.1.75 snapshot showed the app
+            // correctly laid out landscape but shrunk to ~20% in the middle.
+            // Reset ONLY the transform + center; frames/bounds stay owned by
+            // SpringBoard, whose layer rotation turns the {391,848} canvas into
+            // the wide pane.
+            contentView.transform = CGAffineTransformIdentity;
+            contentView.center = CGPointMake(paneW / 2.0, paneH / 2.0);
         }
         contentView.clipsToBounds = YES;
         appView.clipsToBounds = YES;
@@ -4474,7 +4483,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.75 loaded ---");
+        CLog(@"--- DashSplit 0.1.76 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
