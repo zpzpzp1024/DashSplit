@@ -3728,10 +3728,17 @@ static void DashWiFiJoinNetwork(NSString *ssid, NSString *password)
         }
         CLog(@"wifi: join \"%@\" added=%d known=%s", ssid, added, net ? "yes" : "no");
         CFRelease(client);
-        return;
+        // 0.1.69: the private API can only act on networks the phone already
+        // knows. If the network is NOT known (net==NULL — e.g. the car's
+        // hotspot was never joined before), DO NOT return: fall through to the
+        // NEHotspotConfiguration fallback below, which can add brand-new SSIDs
+        // (with a passphrase when configured). Field logs showed
+        // "added=0 known=no" followed by nothing — the fallback never ran.
+        if (net) return;
     }
 
-    // 3) Fallback: public NEHotspotConfiguration API.
+    // 3) Fallback: public NEHotspotConfiguration API (also reached when the
+    //    private path loaded but the network is unknown to the phone).
     @try {
         dlopen("/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension", RTLD_NOW);
         Class cfgClass = NSClassFromString(@"NEHotspotConfiguration");

@@ -5,12 +5,12 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 > English version: [README.en.md](README.en.md)
 
 - **包名**：`zp.dashsplit`
-- **当前版本**：0.1.68 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
+- **当前版本**：0.1.69 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
 - **宿主模式参考**：[carplay-cast](https://github.com/EthanArbuckle/carplay-cast)（Apache-2.0）
 
 ---
 
-## 功能特性（0.1.68）
+## 功能特性（0.1.69）
 
 1. **多应用分屏**：在系统设置「车载分屏」里勾选要上车的 App（最多 8 个，逗号分隔保存为 `SelectedApps`），连接 CarPlay 后同时出现在车机上；**已勾选的 App 在列表中置顶分组显示**（方便取消勾选），勾选顺序即分屏从左到右的顺序，置顶不影响分屏顺序。
 2. **每面板右侧外部工具条**：每个面板**外侧右侧竖排 2 个按钮**——上：**拖动把手**（按住上下左右拖动该面板）；下：**关闭 ×**（收起面板变胶囊）。工具条紧贴面板外缘、随面板移动/缩放，**不遮盖 app 任何区域**。
@@ -32,7 +32,7 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 15. **工具条防丢（0.1.61+）**：面板放大导致右侧工具条（拖动把手 + 关闭 ×）伸出屏幕右边界时，工具条**自动翻转到面板左外侧**，始终保持可用。
 16. **单一「大小」滑杆（0.1.62+）**：设置里每个 App 原「占比（1-5）+ 缩放（10-100）」合并为一个**连续「大小」滑杆（10-600，100=默认宽度 1/5 屏宽）**，小于 100 缩小、大于 100 放大（最大 6 倍）；旧的占比×缩放设置**自动迁移**合并成对应的大小值。
 17. **面板横屏/竖屏切换（0.1.64+）**：每个面板工具条新增**横屏↔竖屏**按钮，点哪个转哪个、各面板独立。横屏时面板宽高比翻转为横屏比例；**0.1.66 起无论「等比缩放」还是「拉伸填满」模式，App 都按横向重新布局（场景参考尺寸 + landscape 方向）——画面直接变宽，视频类 App（如 VLC）的视频变宽铺满，整个画面不再被旋转**。0.1.67 修复竖屏黑屏；0.1.68 修复反复横竖切换界面错乱（横屏→竖屏重新托管前先关闭 UIScreen 尺寸挂钩残留），并加强横屏时对场景重排的延迟重试让视频更完整地变宽。状态与位置/缩放一起持久化，重连车机自动恢复。
-18. **WiFi 自动连接（0.1.64+）**：设置里配置“热点名称(SSID) + 密码（可留空）”，开启后**检测到 CarPlay 连接（有线/无线）自动连接该热点**——主路径 WiFiManagerClient 私有 API（添加网络 + joinOnce 立即加入），兑底 NEHotspotConfigurationManager。连接后 +5s/+10s 写入验证日志 `wifi: verify ... matched=1` 即判定生效；无车机时创建 `/var/mobile/Library/Preferences/zp.dashsplit.wifitest` 可在启动 5 秒后触发一次用于测试。
+18. **WiFi 自动连接（0.1.64+）**：设置里配置“热点名称(SSID) + 密码（可留空）”，开启后**检测到 CarPlay 连接（有线/无线）自动连接该热点**——主路径 WiFiManagerClient 私有 API（添加网络 + joinOnce 立即加入，**仅对手机已连过的已知热点有效**），**0.1.69 起热点对手机未知（从未连过）时会继续走 NEHotspotConfigurationManager 兑底**（公开 API，支持全新 SSID + 密码）。连接后 +5s/+10s 写入验证日志 `wifi: verify ... matched=1` 即判定生效；无车机时创建 `/var/mobile/Library/Preferences/zp.dashsplit.wifitest` 可在启动 5 秒后触发一次用于测试。
 
 ---
 
@@ -183,6 +183,8 @@ make package FINALPACKAGE=1
 ---
 
 ## 版本记录（摘要）
+
+- **0.1.69**：**修复 WiFi 自动连接不生效**——原实现复制自 CarPlayPlus：WiFiManagerClient 私有 API 只要符号加载成功就无条件返回，而它对**手机从未连过的热点**无效（日志 `added=0 known=no` 后无后续），NEHotspotConfigurationManager 兑底从未执行。现在未知热点（`net==NULL`）会**落到公开 API 兑底**（支持全新 SSID + 密码），日志会出现 `wifi: NEHotspot fallback apply ...`。
 
 - **0.1.68**：**修复反复横竖切换界面错乱**——0.1.66+ 横屏时开启的 `UIScreen bounds` 尺寸挂钩在重新托管（横屏→竖屏）期间依旧残留，新场景首帧按旧的横向小尺寸布局导致画面全乱；现在**重新托管前先关闭挂钩并清零尺寸**，竖屏场景从第一帧就是正确布局；同时横屏切换后 **0.8s/1.6s 两次延迟重试**场景横向参考尺寸与适配，给 VLC 等 App 足够的异步重排时间，横屏视频更完整地变宽。
 
