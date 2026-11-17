@@ -4358,12 +4358,16 @@ static void WiFiTickWhileConnected(void)
     NSString *ssid = PrefString(kPrefsWifiSSID);
     if (!ssid.length) return;
 
-    if (gWiFiAttempts >= 8) return;   // cycle exhausted — next unlock/edge resets
+    // Budget: 8 fast attempts (20s apart) then slow ones (60s apart) up to 20
+    // total — a car hotspot that only comes up after the infotainment has fully
+    // booted can take several minutes, and giving up in 2.7 min was too eager.
+    if (gWiFiAttempts >= 20) return;   // cycle exhausted — next unlock/edge resets
 
-    // Only look at the radio every 20s: creating a WiFiManagerClient on every
-    // 3s Tick just to read the SSID is needless churn.
+    // Only look at the radio when an attempt is due: creating a
+    // WiFiManagerClient on every 3s Tick just to read the SSID is churn.
     double now = CFAbsoluteTimeGetCurrent();
-    if (gWiFiLastAttemptAt > 0 && now - gWiFiLastAttemptAt < 20.0) return;
+    double gap = (gWiFiAttempts < 8) ? 20.0 : 60.0;
+    if (gWiFiLastAttemptAt > 0 && now - gWiFiLastAttemptAt < gap) return;
 
     NSString *cur = DashWiFiCurrentSSID();
     if (cur.length && [cur isEqualToString:ssid]) {
@@ -4374,8 +4378,8 @@ static void WiFiTickWhileConnected(void)
 
     gWiFiAttempts++;
     gWiFiLastAttemptAt = now;
-    CLog(@"wifi: retry %d/8 — current=\"%@\" target=\"%@\" (hotspot may still be coming up)",
-         gWiFiAttempts, cur, ssid);
+    CLog(@"wifi: retry %d/20 (%@) — current=\"%@\" target=\"%@\"",
+         gWiFiAttempts, (gWiFiAttempts <= 8 ? @"fast/20s" : @"slow/60s"), cur, ssid);
     DashWiFiJoinNetwork(ssid, PrefString(kPrefsWifiPassword) ?: @"");
 }
 
@@ -4690,7 +4694,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.80 loaded ---");
+        CLog(@"--- DashSplit 0.1.81 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
