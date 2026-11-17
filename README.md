@@ -5,7 +5,7 @@ Jailbreak tweak（Theos + Objective-C++，注入 SpringBoard）：把 **最多 8
 > English version: [README.en.md](README.en.md)
 
 - **包名**：`zp.dashsplit`
-- **当前版本**：0.1.79 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
+- **当前版本**：0.1.81 ｜ 兼容 iOS 15.0+（arm64，Dopamine / palera1n 等现代 jailbreak）
 - **宿主模式参考**：[carplay-cast](https://github.com/EthanArbuckle/carplay-cast)（Apache-2.0）
 
 ---
@@ -118,7 +118,7 @@ killall -9 SpringBoard
 | `PaneLandscape0`… | 每个面板的横屏状态（0=竖屏，1=横屏；0.1.64 起，自动保存/恢复） |
 | `WifiAutoJoin` | WiFi 自动连接总开关（默认关；0.1.64 起） |
 | `WifiSSID` | 要自动连接的热点名称（0.1.64 起） |
-| `WifiPassword` | 热点密码，可留空（仅当手机曾连过该热点时才能连上；0.1.64 起） |
+| `WifiPassword` | 热点密码，可留空（留空时只能连「手机已记住且当前在范围内」的热点；不知道密码就填上，WPA2 需 8 位以上；0.1.64 起） |
 
 Bundle ID 查询（SSH）：
 
@@ -184,6 +184,10 @@ make package FINALPACKAGE=1
 ---
 
 ## 版本记录（摘要）
+
+- **0.1.81**：**放宽 WiFi 自动连接的重试窗口**——8 次 × 20 秒（快）之后转为 12 次 × 60 秒（慢），合计约 15 分钟；车机热点往往要等信息娱乐系统完全启动才广播，2.7 分钟就放弃太激进。
+
+- **0.1.80**：**修复「CarPlay 已连上但热点没自动连」**——0.1.64 只在 CarPlay 连接**上升沿**触发一次（延迟 3 秒后连一次就结束），实测两种场景必失败：① 车机热点随车启动，连接瞬间热点还不存在；② 无线 CarPlay 可以跨停车甚至过夜保持连接，早上根本没有新的上升沿，于是**一次都不会执行**（2026-11-17 早间日志里连一条 `wifi:` 都没有）。现在改为**可重启的重试周期**：上升沿启动一轮（最多 20 次，20s/60s 递减频率），**每次手机解锁且车机仍连接时重启一轮并立即尝试一次**（对应「上车解锁」这个时机），车机断开时清零；当前 SSID 优先用 `WiFiManagerClientCopyCurrentNetwork` 读取（`CNCopyCurrentNetworkInfo` 在 SpringBoard 里常返回空），一旦确认已连上目标网络就停止重试。
 
 - **0.1.79**：**修复横屏状态点「放大」后画面跳到左上角 3/4**——0.1.78 的画布自愈会在延迟回调里比对「排程时捕获的面板尺寸」，而放大把面板从 `610×282` 变成全屏 `896×414` 后，旧回调仍拿 610×282 做基准，误判「推送丢了」并把**旧尺寸**推回场景，画布于是缩到左上角那块。现在自愈前先确认该尺寸仍是**最近一次推给场景的尺寸**（`gScenePushedSize`），被更新的布局取代就直接跳过，不再回退。
 
