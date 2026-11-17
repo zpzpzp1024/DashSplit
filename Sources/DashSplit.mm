@@ -3298,6 +3298,12 @@ static DashSplitControl *gControl;
 
 #pragma mark - Phone lock state
 
+// 0.1.80: implemented in the WiFi section further down. Declared here so the
+// unlock handler can restart the WiFi join cycle (see the comment at its use).
+static BOOL CarScreenConnected(void);
+static void WiFiResetRetryCycle(void);
+static void WiFiKickJoinNow(void);
+
 // 0.1.27: SpringBoard posts the com.apple.springboard.lockstate Darwin
 // note on every lock AND unlock, carrying the new state readable via
 // notify_get_state (1 = locked, 0 = unlocked). Subscribing is a plain event
@@ -3346,6 +3352,19 @@ static void HandleLockStateChanged(int token)
     }
     
     CLog(@"lock: phone unlocked");
+
+    // 0.1.80: an unlock while the car display is still connected is the best
+    // proxy for "the driver just got in". Restart the WiFi join cycle here —
+    // field report (2026-11-17 morning): CarPlay had stayed connected since the
+    // previous evening, so the rising-edge trigger had fired hours ago (and its
+    // one-shot attempt had long since failed because the car's hotspot was
+    // off); with no new edge, nothing ran in the morning and the car never got
+    // on the configured network. Restarting on unlock gives a fresh window of
+    // retries exactly when the hotspot is likely to be booting up.
+    if (CarScreenConnected()) {
+        WiFiResetRetryCycle();
+        WiFiKickJoinNow();
+    }
     
     // 0.1.49: if auto-start was deferred (gPendingShow == 1), the capsule
     // row hasn't been shown yet. Show it now — capsules have no Live
@@ -4118,6 +4137,11 @@ typedef void (*DashWiFiClientAddNetworkFn)(WiFiManagerClientRef, WiFiNetworkRef)
 typedef void (*DashWiFiClientSetNetworkPropertyFn)(WiFiManagerClientRef, WiFiNetworkRef, CFStringRef, CFTypeRef);
 typedef CFMutableDictionaryRef (*DashWiFiNetworkCreateFn)(CFAllocatorRef, CFDictionaryRef);
 typedef void (*DashWiFiNetworkSetPropertyFn)(WiFiNetworkRef, CFStringRef, CFTypeRef);
+// 0.1.80: read the CURRENT network through the private API as well —
+// CNCopyCurrentNetworkInfo can come back empty inside SpringBoard, and the
+// retry loop needs a trustworthy "am I already on the target?" answer.
+typedef WiFiNetworkRef (*DashWiFiClientCopyCurrentFn)(WiFiManagerClientRef);
+typedef CFStringRef (*DashWiFiNetworkGetSSIDFn)(WiFiNetworkRef);
 
 static WiFiManagerClientRef (*sDashWiFiClientCreate)(CFAllocatorRef, int);
 static void (*sDashWiFiClientSetPower)(WiFiManagerClientRef, bool);
@@ -4126,6 +4150,8 @@ static void (*sDashWiFiClientAddNetwork)(WiFiManagerClientRef, WiFiNetworkRef);
 static void (*sDashWiFiClientSetNetworkProperty)(WiFiManagerClientRef, WiFiNetworkRef, CFStringRef, CFTypeRef);
 static CFMutableDictionaryRef (*sDashWiFiNetworkCreate)(CFAllocatorRef, CFDictionaryRef);
 static void (*sDashWiFiNetworkSetProperty)(WiFiNetworkRef, CFStringRef, CFTypeRef);
+static WiFiNetworkRef (*sDashWiFiClientCopyCurrent)(WiFiManagerClientRef);
+static CFStringRef (*sDashWiFiNetworkGetSSID)(WiFiNetworkRef);
 
 static BOOL DashWiFiLoadSymbols(void)
 {
@@ -4146,6 +4172,8 @@ static BOOL DashWiFiLoadSymbols(void)
             sDashWiFiClientSetNetworkProperty = (DashWiFiClientSetNetworkPropertyFn)dlsym(handle, "WiFiManagerClientSetNetworkProperty");
             sDashWiFiNetworkCreate         = (DashWiFiNetworkCreateFn)dlsym(handle, "WiFiNetworkCreate");
             sDashWiFiNetworkSetProperty    = (DashWiFiNetworkSetPropertyFn)dlsym(handle, "WiFiNetworkSetProperty");
+            sDashWiFiClientCopyCurrent     = (DashWiFiClientCopyCurrentFn)dlsym(handle, "WiFiManagerClientCopyCurrentNetwork");
+            sDashWiFiNetworkGetSSID        = (DashWiFiNetworkGetSSIDFn)dlsym(handle, "WiFiNetworkGetSSID");
             if (sDashWiFiClientCreate && sDashWiFiClientAddNetwork) {
                 loaded = YES;
                 break;
@@ -4159,8 +4187,26 @@ static BOOL DashWiFiLoadSymbols(void)
 }
 
 // Current connected SSID (en0). Used by the verify logs to prove the join.
+// 0.1.80: try the private WiFiManager path first — inside SpringBoard
+// CNCopyCurrentNetworkInfo frequently returns nothing, which would make the
+// retry loop believe it never joined and keep hammering the join API.
 static NSString *DashWiFiCurrentSSID(void)
 {
+    if (DashWiFiLoadSymbols() && sDashWiFiClientCreate &&
+        sDashWiFiClientCopyCurrent && sDashWiFiNetworkGetSSID) {
+        WiFiManagerClientRef client = sDashWiFiClientCreate(kCFAllocatorDefault, 0);
+        if (client) {
+            WiFiNetworkRef net = sDashWiFiClientCopyCurrent(client);
+            NSString *ssid = nil;
+            if (net) {
+                CFStringRef name = sDashWiFiNetworkGetSSID(net);
+                if (name) ssid = [NSString stringWithString:(__bridge NSString *)name];
+                CFRelease(net);
+            }
+            CFRelease(client);
+            if (ssid.length) return ssid;
+        }
+    }
 #if __has_include(<SystemConfiguration/CaptiveNetwork.h>)
     NSDictionary *ifs = (__bridge_transfer NSDictionary *)CNCopyCurrentNetworkInfo(CFSTR("en0"));
     NSString *ssid = ifs[(__bridge NSString *)kCNNetworkInfoKeySSID];
@@ -4256,6 +4302,83 @@ static void DashWiFiJoinNetwork(NSString *ssid, NSString *password)
 // Previous connection state for the rising-edge detector in Tick.
 static BOOL gCarPlayPrevConnected = NO;
 
+// 0.1.80: retry cycle state for the auto-join.
+// The 0.1.64 design was one-shot: the rising edge of the CarPlay connection
+// fired a single join attempt (after a 3s settle). Two field failures proved
+// that insufficient:
+//   • the car's hotspot comes up with the car, so an attempt made right when
+//     CarPlay connects often finds no network at all;
+//   • when CarPlay stays connected across a stop (or overnight), there is no
+//     new rising edge in the morning — nothing runs at all.
+// So the join is now a bounded retry cycle that restarts on every CarPlay
+// rising edge AND on every unlock while the car display is connected.
+static int gWiFiAttempts = 0;
+static double gWiFiLastAttemptAt = 0;
+static BOOL gWiFiJoinConfirmed = NO;
+
+static void WiFiResetRetryCycle(void)
+{
+    gWiFiAttempts = 0;
+    gWiFiLastAttemptAt = 0;
+    gWiFiJoinConfirmed = NO;
+}
+
+// One immediate attempt, used by the unlock kick. Skips everything when the
+// feature is off, unconfigured, or already on the target network.
+static void WiFiKickJoinNow(void)
+{
+    if (!PrefBool(kPrefsWifiAutoJoin, NO)) {
+        CLog(@"wifi: unlock kick — autojoin disabled, skipping");
+        return;
+    }
+    NSString *ssid = PrefString(kPrefsWifiSSID);
+    if (!ssid.length) {
+        CLog(@"wifi: unlock kick — no SSID configured, skipping");
+        return;
+    }
+    NSString *cur = DashWiFiCurrentSSID();
+    if (cur.length && [cur isEqualToString:ssid]) {
+        gWiFiJoinConfirmed = YES;
+        CLog(@"wifi: unlock kick — already on \"%@\", nothing to do", ssid);
+        return;
+    }
+    gWiFiAttempts = 1;
+    gWiFiLastAttemptAt = CFAbsoluteTimeGetCurrent();
+    CLog(@"wifi: unlock kick — join \"%@\" (current=\"%@\")", ssid, cur);
+    DashWiFiJoinNetwork(ssid, PrefString(kPrefsWifiPassword) ?: @"");
+}
+
+// Called on every 3s Tick while the car display is connected (never on the
+// rising edge — that path has its own settle delay). Retries every 20s until
+// confirmed or the cycle budget runs out.
+static void WiFiTickWhileConnected(void)
+{
+    if (gWiFiJoinConfirmed) return;
+    if (!PrefBool(kPrefsWifiAutoJoin, NO)) return;
+    NSString *ssid = PrefString(kPrefsWifiSSID);
+    if (!ssid.length) return;
+
+    if (gWiFiAttempts >= 8) return;   // cycle exhausted — next unlock/edge resets
+
+    // Only look at the radio every 20s: creating a WiFiManagerClient on every
+    // 3s Tick just to read the SSID is needless churn.
+    double now = CFAbsoluteTimeGetCurrent();
+    if (gWiFiLastAttemptAt > 0 && now - gWiFiLastAttemptAt < 20.0) return;
+
+    NSString *cur = DashWiFiCurrentSSID();
+    if (cur.length && [cur isEqualToString:ssid]) {
+        gWiFiJoinConfirmed = YES;
+        CLog(@"wifi: on target \"%@\" now — retry cycle done (%d attempt(s))", ssid, gWiFiAttempts);
+        return;
+    }
+
+    gWiFiAttempts++;
+    gWiFiLastAttemptAt = now;
+    CLog(@"wifi: retry %d/8 — current=\"%@\" target=\"%@\" (hotspot may still be coming up)",
+         gWiFiAttempts, cur, ssid);
+    DashWiFiJoinNetwork(ssid, PrefString(kPrefsWifiPassword) ?: @"");
+}
+
 // Called on the CarPlay-connect rising edge (Tick) and by the wifitest
 // marker. Delays briefly so the network stack settles, then joins and
 // verifies the result at +5s/+10s.
@@ -4270,8 +4393,14 @@ static void WiFiHandleCarPlayConnected(void)
         CLog(@"wifi: carplay connected — no SSID configured, skipping");
         return;
     }
+    // 0.1.80: this is attempt 1 of a new cycle; the 3s settle below does not
+    // need to hide the timestamp from the retry loop, it just delays the join.
+    gWiFiAttempts = 1;
+    gWiFiLastAttemptAt = CFAbsoluteTimeGetCurrent();
+    gWiFiJoinConfirmed = NO;
     NSString *password = PrefString(kPrefsWifiPassword) ?: @"";
-    CLog(@"wifi: carplay connected — autojoin enabled=1 ssid=\"%@\"", ssid);
+    CLog(@"wifi: carplay connected — autojoin enabled=1 ssid=\"%@\" current=\"%@\"",
+         ssid, DashWiFiCurrentSSID());
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         DashWiFiJoinNetwork(ssid, password);
         // Verification — did the phone actually join the target network?
@@ -4376,8 +4505,17 @@ static void Tick(void)
 
         // 0.1.64: rising edge of the CarPlay connection triggers the WiFi
         // auto-join (wired & wireless both count; one shot per connection).
+        // 0.1.80: …and while the connection is up, a bounded retry loop keeps
+        // trying, because the car's hotspot usually comes up with the car and
+        // is not there yet on the first attempt.
         if (carConnected && !gCarPlayPrevConnected) {
+            WiFiResetRetryCycle();
             WiFiHandleCarPlayConnected();
+        } else if (carConnected) {
+            WiFiTickWhileConnected();
+        } else if (gCarPlayPrevConnected) {
+            WiFiResetRetryCycle();   // fresh cycle on the next connection
+            CLog(@"wifi: car display gone — retry cycle reset");
         }
         gCarPlayPrevConnected = carConnected;
         
@@ -4552,7 +4690,7 @@ static void DashSplitInit(void)
         // from this constructor (safe mode). The cache now fills lazily:
         // PaneAspect / MakeTestWindow / teardown call it once UIKit is fully
         // up, and the guard + @try inside make every call site safe.
-        CLog(@"--- DashSplit 0.1.79 loaded ---");
+        CLog(@"--- DashSplit 0.1.80 loaded ---");
         InstallExceptionFilter();
         InstallCrashHandlers();
         
@@ -4604,6 +4742,17 @@ static void DashSplitInit(void)
                 CLog(@"wifi: wifitest marker found — triggering one auto-join in 5s");
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                     WiFiHandleCarPlayConnected();
+                });
+                // 0.1.80: also exercise the retry loop (25s later the 20s gap
+                // has elapsed, so this must log "retry 2/8" and join again) and
+                // the unlock kick entry point. Delete the marker afterwards.
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    CLog(@"wifi: wifitest — calling retry tick (expect retry 2/8)");
+                    WiFiTickWhileConnected();
+                });
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 40 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    CLog(@"wifi: wifitest — calling unlock kick path");
+                    WiFiKickJoinNow();
                 });
             }
         });
